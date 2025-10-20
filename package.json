@@ -33,6 +33,10 @@
   },
   "dependencies": {
     "@near-js/crypto": "^2.3.3",
-    "near-sign-verify": "^0.4.3"
+    "near-sign-verify": "^0.4.3",
+    "@orpc/contract": "^1.10.0",
+    "@orpc/server": "^1.10.0",
+    "effect": "3.18.1",
+    "zod": "4.1.5"
   }
 }
