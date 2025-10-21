@@ -6,7 +6,7 @@
   "types": "./dist/index.d.ts",
   "type": "module",
   "peerDependencies": {
-    "every-plugin": "^0.3.0",
+    "every-plugin": "^0.3.1",
     "typescript": "^5.0.0"
   },
   "devDependencies": {
@@ -16,7 +16,7 @@
     "@rspack/core": "^1.5.2",
     "@types/node": "^24.6.0",
     "dotenv": "^17.2.2",
-    "every-plugin": "^0.3.0",
+    "every-plugin": "^0.3.1",
     "msw": "^2.3.0",
     "sirv": "^3.0.2",
     "vitest": "^3.2.4",
@@ -33,10 +33,6 @@
   },
   "dependencies": {
     "@near-js/crypto": "^2.3.3",
-    "near-sign-verify": "^0.4.3",
-    "@orpc/contract": "^1.10.0",
-    "@orpc/server": "^1.10.0",
-    "effect": "3.18.1",
-    "zod": "4.1.5"
+    "near-sign-verify": "^0.4.3"
   }
 }

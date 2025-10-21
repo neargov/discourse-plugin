@@ -23,7 +23,7 @@ import {
  */
 
 export default createPlugin({
-  id: "@neargov/discourse",
+  id: "@neargov/discourse-plugin",
 
   variables: z.object({
     discourseBaseUrl: z.string().url(),
