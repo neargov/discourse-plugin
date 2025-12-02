@@ -1,11 +1,60 @@
+# --------------------------------------
 # Dependencies
+# --------------------------------------
 node_modules/
+bun.lockb
+.pnp.cjs
+.pnp.loader.mjs
 
+# --------------------------------------
 # Build output
+# --------------------------------------
 dist/
+build/
+.out/
 
+# --------------------------------------
+# Coverage (Vitest / Istanbul)
+# --------------------------------------
+coverage/
+*.lcov
+
+# --------------------------------------
 # Environment
+# --------------------------------------
 .env
+.env.local
+.env.*
+!.env.example
 
-# OS
+# --------------------------------------
+# OS / Editor Junk
+# --------------------------------------
 .DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# --------------------------------------
+# Logs
+# --------------------------------------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+
+# --------------------------------------
+# TypeScript
+# --------------------------------------
+*.tsbuildinfo
+
+# --------------------------------------
+# Misc
+# --------------------------------------
+*.log
+.temp/
+.tmp/
