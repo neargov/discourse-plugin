@@ -1,140 +1,113 @@
 # Discourse Plugin
 
-Connect NEAR accounts with Discourse usernames to enable verifiable, signed forum interactions.
+Type-safe Discourse integration for every-plugin runtimes. Exposes common forum operations (link, create/edit posts, search, browse) with built-in retry, logging, and nonce management.
 
-## Quick start
+## Installation
 
 ```bash
 bun install
-bun test
 ```
 
-Minimal runtime wiring:
+## Quick Start
 
 ```ts
 import { createLocalPluginRuntime } from "every-plugin/testing";
-import DiscoursePlugin from "@neargov/discourse";
+import DiscoursePlugin from "discourse-plugin";
 
-const { client } = await createLocalPluginRuntime(
+const runtime = createLocalPluginRuntime(
   {
     registry: {
-      "@neargov/discourse": {
+      "discourse-plugin": {
         remoteUrl: "http://localhost:3014/remoteEntry.js",
         version: "0.0.1",
-        description: "Discourse NEAR plugin",
+        description: "Discourse plugin",
       },
     },
     secrets: { DISCOURSE_API_KEY: process.env.DISCOURSE_API_KEY! },
   },
-  { "@neargov/discourse": DiscoursePlugin }
-).usePlugin("@neargov/discourse", {
+  { "discourse-plugin": DiscoursePlugin }
+);
+
+const { client } = await runtime.usePlugin("discourse-plugin", {
   variables: {
-    discourseBaseUrl: "https://discuss.near.vote",
+    discourseBaseUrl: "https://discuss.example.com",
     discourseApiUsername: "system",
     clientId: "your-client-id",
-    recipient: "social.near",
-    requestTimeoutMs: 30000,
+    requestTimeoutMs: 30_000,
     nonceTtlMs: 10 * 60 * 1000,
     nonceCleanupIntervalMs: 5 * 60 * 1000,
-    signatureTtlMs: 300000,
   },
   secrets: { discourseApiKey: "{{DISCOURSE_API_KEY}}" },
 });
 
-const auth = await client.getUserApiAuthUrl({
+const { authUrl, nonce } = await client.initiateLink({
   clientId: "your-client-id",
   applicationName: "Your App",
 });
 
-// Later: complete the link after Discourse redirects back
-await client.completeLink({
+// After Discourse redirects back with an encrypted payload:
+const link = await client.completeLink({
   payload: "encrypted-payload-from-discourse",
-  nonce: auth.nonce,
-  authToken: "near-signed-token",
+  nonce,
 });
 
-// Create a post as the linked Discourse user
 await client.createPost({
-  authToken: "near-signed-token",
-  title: "Hello from NEAR",
-  raw: "This is my first forum post via the plugin.",
+  username: link.discourseUsername,
+  title: "Hello from every-plugin",
+  raw: "Posting via the Discourse plugin.",
   category: 1,
 });
+
+await runtime.shutdown();
 ```
 
-## Configuration (validated with Zod)
+## Configuration (validated via Zod)
 
-- `discourseBaseUrl` **required**: Base forum URL (https). Invalid URLs fail fast.
-- `discourseApiUsername` default `system`: Impersonated username for system calls.
-- `clientId` default `discourse-near-plugin`: Passed to Discourse user API auth flow.
-- `recipient` default `social.near`: NEP-413 expected recipient for signature verification.
-- `requestTimeoutMs` default `30000`: HTTP timeout per Discourse request.
-- `nonceTtlMs` default `600000`: TTL for generated nonces (ms).
-- `nonceCleanupIntervalMs` default `300000`: Background sweep cadence for expired nonces (ms).
-- `signatureTtlMs` default `300000`: Max NEP-413 signature age (ms).
+- `discourseBaseUrl` **required**: Base Discourse URL.
+- `discourseApiUsername` default `system`: Impersonated system username for API calls.
+- `clientId` default `discourse-plugin`: Discourse user API client identifier.
+- `requestTimeoutMs` default `30000`: Per-request timeout.
+- `nonceTtlMs` default `600000`: Lifetime for issued nonces (ms).
+- `nonceCleanupIntervalMs` default `300000`: Background cleanup cadence (ms).
+- `logBodySnippetLength` default `500`: Maximum characters from response bodies to include in logs/errors.
+- `operationRetryPolicy` optional: Override retry settings per operation type (`default`, `reads`, `writes`).
 - `userAgent` optional: Custom User-Agent header.
-- `discourseApiKey` **secret**: Discourse system API key (referenced as `{{DISCOURSE_API_KEY}}`).
+- `discourseApiKey` **secret**: Discourse system API key (template-injected as `{{DISCOURSE_API_KEY}}`).
 
-## Procedures & errors (oRPC contract)
+Observability hooks:
+- `requestLogger`: Structured per-attempt request events (`path`, `method`, `attempt`, `status`, `outcome`, `retryDelayMs`, `error`).
+- `fetch`: Custom `fetch` implementation for proxying, mTLS, or tracing instrumentation.
 
-- `getUserApiAuthUrl`: returns `{ authUrl, nonce, expiresAt }`.
-- `completeLink`: verifies NEAR signature, decrypts user API key, stores linkage.
-- `createPost`: creates a topic or reply on behalf of linked user.
-- `editPost`: edits an existing post as linked user.
-- `getLinkage`, `validateLinkage`, `unlinkAccount`, `search`, `read` (topics/posts/users/categories).
+## Contract (procedures)
 
-Common error codes:
-- `UNAUTHORIZED`: NEAR signature verification failed.
-- `FORBIDDEN`: Missing linked account.
-- `BAD_REQUEST`: Invalid/expired nonce or malformed payload.
-- `SERVICE_UNAVAILABLE`: Upstream Discourse response missing required fields.
-- `NOT_FOUND`: Linkage not present when unlinking.
+- `initiateLink`: Generate a user API auth URL, nonce, and expiration.
+- `completeLink`: Decrypt the returned payload and resolve the Discourse user.
+- `createPost`: Create a topic or reply (impersonates provided username).
+- `editPost`: Edit an existing post (impersonates provided username).
+- `prepareUpload`: Build an authenticated upload request for Discourse.
+- `presignUpload` / `batchPresignMultipartUpload`: Request presigned URLs for direct and multipart uploads.
+- `completeMultipartUpload` / `abortMultipartUpload`: Finalize or cancel multipart uploads.
+- `search`: Search Discourse content with optional filters.
+- `ping`: Health probe against the forum.
+- `getCategories`: List categories.
+- `getCategory`: Fetch a category and its subcategories.
+- `getTopic`: Fetch a topic.
+- `getLatestTopics`: Paginated latest topics.
+- `getTopTopics`: Paginated top topics by period.
+- `getPost`: Fetch a post (optionally with raw) and its topic.
+- `getPostReplies`: Fetch replies for a post.
+- `getUser`: Fetch a user profile.
 
-Every error carries an `action` hint in `data` when relevant.
+All procedures surface `CommonPluginErrors` from every-plugin. Notable codes:
+- `BAD_REQUEST`: Invalid nonce/payload/input.
+- `UNAUTHORIZED`/`FORBIDDEN`: Credential or authorization issues.
+- `NOT_FOUND`: Missing resources.
+- `TOO_MANY_REQUESTS`: Discourse rate limits or nonce capacity reached (includes `retryAfterMs` when available).
+- `SERVICE_UNAVAILABLE`: Upstream failures or missing required fields.
 
-## Security & safety
-
-- Signatures are time-bound via `signatureTtlMs`.
-- Nonces expire after `nonceTtlMs` and are cleaned up continuously (`nonceCleanupIntervalMs` tunable).
-- Secrets are never logged; logger failures are swallowed by the safe logger wrapper.
-- Discourse requests honor timeouts and abort correctly; base URL is validated up front.
-
-## Testing & release
+## Development
 
 ```bash
-bun test
-bunx vitest run --coverage
-bun run build
+bun test          # unit + integration tests
+bun run build     # bundle + type output
 ```
-
-Before publishing:
-- ensure `dist/` is fresh (`bun run build`)
-- inspect the pack output: `npm pack --dry-run`
-- verify coverage remains 100% (sources only)
-
-## Type bindings for consumers
-
-```ts
-// src/types.d.ts in your consuming app
-import type DiscoursePlugin from "@neargov/discourse";
-
-declare module "every-plugin" {
-  interface RegisteredPlugins {
-    "@neargov/discourse": typeof DiscoursePlugin;
-  }
-}
-```
-
-## License
-
-MIT
-
-## Further docs
-
-- Getting started: https://plugin.everything.dev/docs/getting-started
-- Creating plugins: https://plugin.everything.dev/docs/creating-plugins
-- Type safety: https://plugin.everything.dev/docs/getting-started/type-safety
-- Using plugins: https://plugin.everything.dev/docs/using-plugins
-- Local development (`createLocalPluginRuntime`): https://plugin.everything.dev/docs/using-plugins/local-development
-- Testing: https://plugin.everything.dev/docs/testing
-- Deployment (Module Federation, dev server, bundling): https://plugin.everything.dev/docs/creating-plugins/deployment

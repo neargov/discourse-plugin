@@ -3,6 +3,6 @@ import type DiscoursePlugin from "./index";
 
 declare module "every-plugin" {
   interface RegisteredPlugins {
-    "@neargov/discourse": typeof DiscoursePlugin;
+    "discourse-plugin": typeof DiscoursePlugin;
   }
 }

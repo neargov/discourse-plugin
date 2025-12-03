@@ -1,0 +1,2 @@
+export const TRANSIENT_STATUSES = new Set([408, 425, 429, 499, 502, 503, 504]);
+export const DEFAULT_BODY_SNIPPET_LENGTH = 500;
