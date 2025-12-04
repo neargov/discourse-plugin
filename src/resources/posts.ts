@@ -454,9 +454,12 @@ export const createPostsResource = (client: ResourceClient) => ({
         }
       );
 
-      return {
-        success: normalizeSuccessFlag(data?.success) ?? true,
-      };
+      const success = normalizeSuccessFlag(data?.success);
+      if (success === undefined) {
+        throw new Error("Delete revision response missing explicit success flag");
+      }
+
+      return { success };
     }),
 
   resolvePostActionType,

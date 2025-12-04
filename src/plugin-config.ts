@@ -94,6 +94,10 @@ export const VariablesSchema = z.object({
     .positive()
     .default(10)
     .describe("Allowed Discourse API requests per second for this plugin instance"),
+  rateLimitStrategy: z
+    .enum(["global", "perAction", "perClient", "perActionClient"])
+    .default("global")
+    .describe("Rate limit scope: single bucket, per action, per clientId, or per action+client"),
   cacheMaxSize: z
     .number()
     .int()

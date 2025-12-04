@@ -12,8 +12,29 @@ export const buildTopicsRouter = (params: {
   run: RunEffect;
   makeHandler: MakeHandler;
   withCache: <T>(params: { action: string; key: string; fetch: () => Promise<T> }) => Promise<T>;
+  invalidateCache: (keys: string[]) => void;
+  invalidateCacheByPrefix: (prefixes: string[]) => void;
 }) => {
-  const { builder, discourseService, log, run, makeHandler, withCache } = params;
+  const {
+    builder,
+    discourseService,
+    log,
+    run,
+    makeHandler,
+    withCache,
+    invalidateCache,
+    invalidateCacheByPrefix,
+  } = params;
+
+  const invalidateTopicCache = (topicId: number) => {
+    invalidateCache([`topic:${topicId}`]);
+    invalidateCacheByPrefix([
+      "topics:latest:",
+      "topics:list:",
+      "topics:top:",
+      "topics:category:",
+    ]);
+  };
 
   return {
     getTopic: builder.getTopic.handler(
@@ -150,6 +171,8 @@ export const buildTopicsRouter = (params: {
           enabled: input.enabled,
         });
 
+        invalidateTopicCache(input.topicId);
+
         return result;
       })
     ),
@@ -172,6 +195,8 @@ export const buildTopicsRouter = (params: {
           hasTitle: Boolean(input.title),
           hasCategory: input.categoryId != null,
         });
+
+        invalidateTopicCache(input.topicId);
 
         return result;
       })
@@ -197,6 +222,8 @@ export const buildTopicsRouter = (params: {
           username: input.username,
         });
 
+        invalidateTopicCache(input.topicId);
+
         return result;
       })
     ),
@@ -220,6 +247,8 @@ export const buildTopicsRouter = (params: {
           groupNames: input.groupNames,
         });
 
+        invalidateTopicCache(input.topicId);
+
         return result;
       })
     ),
@@ -242,6 +271,8 @@ export const buildTopicsRouter = (params: {
           username: input.username,
         });
 
+        invalidateTopicCache(input.topicId);
+
         return result;
       })
     ),
@@ -262,6 +293,8 @@ export const buildTopicsRouter = (params: {
           topicId: input.topicId,
           timestamp: input.timestamp,
         });
+
+        invalidateTopicCache(input.topicId);
 
         return result;
       })
@@ -291,6 +324,8 @@ export const buildTopicsRouter = (params: {
           durationMinutes: input.durationMinutes,
           categoryId: input.categoryId,
         });
+
+        invalidateTopicCache(input.topicId);
 
         return result;
       })

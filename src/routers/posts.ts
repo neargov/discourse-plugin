@@ -19,6 +19,8 @@ export const buildPostsRouter = (params: {
   run: RunEffect;
   makeHandler: MakeHandler;
   withCache?: <T>(params: { action: string; key: string; fetch: () => Promise<T> }) => Promise<T>;
+  invalidateCache?: (keys: string[]) => void;
+  invalidateCacheByPrefix?: (prefixes: string[]) => void;
   RouterConfigError?: RouterConfigErrorCtor;
 }) => {
   const {
@@ -28,6 +30,8 @@ export const buildPostsRouter = (params: {
     run,
     makeHandler,
     withCache,
+    invalidateCache,
+    invalidateCacheByPrefix,
     RouterConfigError = Error as RouterConfigErrorCtor,
   } = params;
 
@@ -36,6 +40,26 @@ export const buildPostsRouter = (params: {
     (async <T>(params: { fetch: () => Promise<T> }) => {
       return params.fetch();
     });
+
+  const invalidate = (keys: string[]) => invalidateCache?.(keys);
+  const invalidateByPrefix = (prefixes: string[]) =>
+    invalidateCacheByPrefix?.(prefixes);
+
+  const invalidatePostCaches = (postId: number | undefined, topicId?: number) => {
+    if (typeof postId === "number") {
+      invalidate([
+        `post:${postId}:raw:false`,
+        `post:${postId}:raw:true`,
+        `post:${postId}:replies`,
+      ]);
+    }
+    invalidateByPrefix(["posts:list:"]);
+
+    if (typeof topicId === "number") {
+      invalidate([`topic:${topicId}`]);
+    }
+    invalidateByPrefix(["topics:latest:", "topics:list:", "topics:top:", "topics:category:"]);
+  };
 
   const requireServiceUnavailable = (errors: PluginErrorConstructors) => {
     const serviceUnavailable = errors.SERVICE_UNAVAILABLE;
@@ -82,6 +106,8 @@ export const buildPostsRouter = (params: {
           topicId: postData.topic_id,
           postId: postData.id,
         });
+
+        invalidatePostCaches(postData.id, postData.topic_id);
 
         return {
           success: true,
@@ -133,6 +159,8 @@ export const buildPostsRouter = (params: {
           topicId: postData.topicId,
         });
 
+        invalidatePostCaches(postData.id, postData.topicId);
+
         return {
           success: true,
           postUrl,
@@ -159,6 +187,8 @@ export const buildPostsRouter = (params: {
           locked: result.locked,
           discourseUsername: input.username,
         });
+
+        invalidatePostCaches(input.postId);
 
         return result;
       })
@@ -187,6 +217,8 @@ export const buildPostsRouter = (params: {
           discourseUsername: input.username,
         });
 
+        invalidatePostCaches(input.postId);
+
         return result;
       })
     ),
@@ -212,6 +244,8 @@ export const buildPostsRouter = (params: {
             forceDestroy,
             discourseUsername: input.username,
           });
+
+          invalidatePostCaches(input.postId);
 
           return result;
         },
@@ -309,6 +343,8 @@ export const buildPostsRouter = (params: {
           revision: input.revision,
           discourseUsername: input.username,
         });
+
+        invalidatePostCaches(input.postId);
         return result;
       })
     ),
@@ -329,6 +365,8 @@ export const buildPostsRouter = (params: {
           revision: input.revision,
           discourseUsername: input.username,
         });
+
+        invalidatePostCaches(input.postId);
         return result;
       })
     ),

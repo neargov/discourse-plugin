@@ -49,6 +49,13 @@ export const buildAuthRouter = (params: {
       ...meta,
     });
 
+  const resolve = async <T>(value: unknown): Promise<T> => {
+    if (value && typeof (value as any).then === "function") {
+      return value as Promise<T>;
+    }
+    return run(value as any);
+  };
+
   const requireBadRequest = (errors: PluginErrorConstructors) => {
     if (!errors.BAD_REQUEST) {
       throw new RouterConfigError("BAD_REQUEST constructor missing");
@@ -56,7 +63,11 @@ export const buildAuthRouter = (params: {
     return errors.BAD_REQUEST;
   };
 
-  const getActiveNonceOrThrow = (nonce: string, errors: PluginErrorConstructors) => {
+  const getActiveNonceOrThrow = (
+    nonce: string,
+    clientId: string | undefined,
+    errors: PluginErrorConstructors
+  ) => {
     const badRequest = requireBadRequest(errors);
     const nonceData = nonceManager.get(nonce);
     if (!nonceData) {
@@ -70,12 +81,17 @@ export const buildAuthRouter = (params: {
       });
     }
     const verified = nonceManager.verify(nonce, nonceData.clientId);
+    const normalizedClientId = typeof clientId === "string" ? clientId.trim() : "";
+    const clientIdMatch =
+      normalizedClientId.length === 0 || nonceData.clientId === normalizedClientId;
+
     logNonceLookup({
-      status: verified ? "verified" : "invalid",
+      status: verified && clientIdMatch ? "verified" : "invalid",
       nonceSuffix: nonce.slice(-6),
       clientId: nonceData.clientId,
+      providedClientId: clientId,
     });
-    if (!verified) {
+    if (!verified || !clientIdMatch) {
       throw badRequest({
         message: "Invalid or expired nonce",
         data: {},
@@ -126,12 +142,14 @@ export const buildAuthRouter = (params: {
 
     completeLink: builder.completeLink.handler(
       makeHandler("complete-link", async ({ input, errors }) => {
-        const nonceData = getActiveNonceOrThrow(input.nonce, errors);
+        const nonceData = getActiveNonceOrThrow(input.nonce, input.clientId, errors);
 
         try {
           let userApiKey: string;
           try {
-            userApiKey = await run(cryptoService.decryptPayload(input.payload, nonceData.privateKey));
+            userApiKey = await resolve<string>(
+              cryptoService.decryptPayload(input.payload, nonceData.privateKey)
+            );
           } catch (error) {
             log("warn", "Failed to decrypt Discourse payload", {
               action: "complete-link",
@@ -143,7 +161,9 @@ export const buildAuthRouter = (params: {
             });
           }
 
-          const discourseUser = await run(discourseService.getCurrentUser(userApiKey));
+          const discourseUser = await resolve<Awaited<ReturnType<typeof discourseService.getCurrentUser>>>(
+            discourseService.getCurrentUser(userApiKey)
+          );
 
           log("info", "Completed Discourse link", {
             action: "complete-link",
@@ -163,7 +183,9 @@ export const buildAuthRouter = (params: {
 
     validateUserApiKey: builder.validateUserApiKey.handler(
       makeHandler("validate-user-api-key", async ({ input, errors }) => {
-        const result = await run(discourseService.validateUserApiKey(input.userApiKey));
+        const result = await resolve<Awaited<ReturnType<typeof discourseService.validateUserApiKey>>>(
+          discourseService.validateUserApiKey(input.userApiKey)
+        );
 
         return mapValidateUserApiKeyResult(result, errors);
       })

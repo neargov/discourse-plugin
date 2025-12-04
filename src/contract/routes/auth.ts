@@ -28,6 +28,7 @@ export const authRoutes = {
       z.object({
         payload: NonEmptyString.min(1, "Encrypted payload is required"),
         nonce: NonEmptyString.min(1, "Nonce is required"),
+        clientId: NonEmptyString.min(1, "Client ID is required").optional(),
       }).describe("Complete Discourse linking by decrypting the payload with the nonce")
     )
     .output(

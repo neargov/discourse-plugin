@@ -40,6 +40,7 @@ const buildMockContext = () => ({
       clientId: "client",
       requestTimeoutMs: 1000,
       requestsPerSecond: 5,
+      rateLimitStrategy: "global",
       cacheMaxSize: 10,
       cacheTtlMs: 1000,
       nonceTtlMs: 1000,
@@ -264,6 +265,7 @@ describe("withErrorLogging", () => {
       clientId: "client",
       requestTimeoutMs: 1000,
       requestsPerSecond: 5,
+      rateLimitStrategy: "global",
       cacheMaxSize: 10,
       cacheTtlMs: 1000,
       nonceTtlMs: 2000,
@@ -456,6 +458,45 @@ describe("withErrorLogging", () => {
       })
     );
   });
+
+  it("increments retry metrics on subsequent attempts", async () => {
+    const { logSpy, log } = makeLogger();
+    const nonceManager = new NonceManager();
+    const metrics = { retryAttempts: 0, nonceEvictions: 0 };
+    let call = 0;
+
+    const withErrorLogging = createWithErrorLogging({
+      log,
+      // Simulate a single retry by re-running the effect once when it fails.
+      run: (eff) => Effect.runPromise(eff.pipe(Effect.catchAll(() => eff))),
+      nonceManager,
+      config: makeConfig(),
+      metrics,
+    });
+
+    const result = await withErrorLogging(
+      "retryable-action",
+      () => {
+        call += 1;
+        if (call === 1) {
+          return Promise.reject(new Error("first-fail"));
+        }
+        return Promise.resolve("ok");
+      },
+      {}
+    );
+
+    expect(result).toBe("ok");
+    expect(metrics.retryAttempts).toBe(1);
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        message: "retryable-action failed",
+        meta: expect.objectContaining({ attempt: 1 }),
+      })
+    );
+  });
 });
 
 describe("rate limiting and caching helpers", () => {
@@ -463,17 +504,91 @@ describe("rate limiting and caching helpers", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(0);
     const limiter = __internalCreateRateLimiter(Number.NaN as any);
 
-    expect(limiter.take()).toEqual({ allowed: true, retryAfterMs: 0 });
+    expect(limiter.take("test")).toEqual({ allowed: true, retryAfterMs: 0 });
 
     now.mockReturnValue(1);
-    const limited = limiter.take();
+    const limited = limiter.take("test");
     expect(limited.allowed).toBe(false);
     expect(limited.retryAfterMs).toBeGreaterThanOrEqual(999);
 
     now.mockReturnValue(1001);
 
-    expect(limiter.take().allowed).toBe(true);
+    expect(limiter.take("test").allowed).toBe(true);
     now.mockRestore();
+  });
+
+  it("uses a safe default rate when requestsPerSecond is invalid", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: -5,
+      strategy: "perAction",
+    });
+
+    expect(limiter.take("action").allowed).toBe(true);
+    now.mockReturnValue(100);
+    const limited = limiter.take("action");
+    expect(limited.allowed).toBe(false);
+    expect(limited.retryAfterMs).toBeGreaterThanOrEqual(900);
+    now.mockRestore();
+  });
+
+  it("falls back to a global bucket when strategy is unknown", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "invalid" as any,
+    });
+
+    expect(limiter.take("one").allowed).toBe(true);
+    now.mockReturnValue(500);
+    expect(limiter.take("two").allowed).toBe(false);
+    now.mockRestore();
+  });
+
+  it("evicts idle buckets after the configured TTL", () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "perAction",
+      bucketTtlMs: 100,
+    });
+
+    expect(limiter.take("a").allowed).toBe(true); // consume token
+    expect(limiter.take("a").allowed).toBe(false); // limited at t=0
+
+    now.mockReturnValue(200); // beyond TTL, should drop old bucket
+    expect(limiter.take("a").allowed).toBe(true); // new bucket allowed
+    now.mockRestore();
+  });
+
+  it("evicts oldest buckets when exceeding maxBuckets", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "perAction",
+      maxBuckets: 2,
+    });
+
+    expect(limiter.take("a").allowed).toBe(true); // bucket a created
+    expect(limiter.take("a").allowed).toBe(false); // now empty
+    expect(limiter.take("b").allowed).toBe(true); // bucket b created, size 2
+    expect(limiter.take("c").allowed).toBe(true); // should evict oldest (a)
+
+    expect(limiter.take("a").allowed).toBe(true); // a gets a fresh bucket despite no time passing
+    now.mockRestore();
+  });
+
+  it("isolates buckets per action and client when configured", () => {
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "perActionClient",
+    });
+
+    expect(limiter.take("action", "client").allowed).toBe(true);
+    expect(limiter.take("action", "client").allowed).toBe(false);
+    expect(limiter.take("action", "other").allowed).toBe(true);
+    expect(limiter.take("other", "client").allowed).toBe(true);
   });
 
   it("evicts expired and oldest cache entries while tracking stats", () => {
@@ -490,8 +605,43 @@ describe("rate limiting and caching helpers", () => {
     now.mockReturnValue(80);
     expect(cache.get("b")).toBeUndefined();
 
-    expect(cache.stats()).toEqual({ size: 0, hits: 1, misses: 2, ttlMs: 50 });
+    expect(cache.stats()).toEqual({ size: 0, hits: 1, misses: 2, evictions: 2, ttlMs: 50 });
     now.mockRestore();
+  });
+
+  it("evicts entries that expire between purge and access", () => {
+    let call = 0;
+    const cache = __internalCreateCache(1, 50, {
+      now: () => {
+        call += 1;
+        if (call <= 2) return 0; // set() purge + timestamp
+        if (call === 3) return 40; // purgeExpired()
+        return 60; // expiration check and beyond
+      },
+    });
+    cache.set("a", "one");
+
+    const value = cache.get("a");
+
+    expect(call).toBeGreaterThanOrEqual(3);
+    expect(value).toBeUndefined();
+    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 1, ttlMs: 50 });
+  });
+
+  it("no-ops when cache capacity is zero", () => {
+    const cache = __internalCreateCache(0, 1000);
+
+    cache.set("a", "one");
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 1000 });
+  });
+
+  it("no-ops when cache TTL is non-positive", () => {
+    const cache = __internalCreateCache(5, -10);
+
+    cache.set("a", "one");
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 0 });
   });
 
   it("logs cache hits and fills via router helpers", async () => {
@@ -533,8 +683,106 @@ describe("rate limiting and caching helpers", () => {
       cacheKey: "cache-key",
     });
     expect(helpers.cacheStats()).toEqual(
-      expect.objectContaining({ hits: 1, misses: 1, size: 1, ttlMs: 1000 })
+      expect.objectContaining({ hits: 1, misses: 1, size: 1, evictions: 0, ttlMs: 1000 })
     );
+  });
+
+  it("refreshes existing cache entries without increasing size", () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const cache = __internalCreateCache(2, 100, { logger });
+
+    cache.set("a", "one");
+    cache.set("a", "two");
+
+    expect(cache.get("a")).toBe("two");
+    expect(cache.stats()).toEqual({ size: 1, hits: 1, misses: 0, evictions: 0, ttlMs: 100 });
+    expect(logger.debug).not.toHaveBeenCalledWith(
+      "Cache eviction",
+      expect.objectContaining({ key: "a" })
+    );
+  });
+
+  it("tracks manual cache deletes as evictions", () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const cache = __internalCreateCache(2, 1000, { logger });
+
+    cache.set("a", "one");
+    cache.delete("a");
+
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 1, ttlMs: 1000 });
+    expect(logger.debug).toHaveBeenCalledWith("Cache eviction", {
+      action: "cache-evict",
+      reason: "manual",
+      key: "a",
+    });
+  });
+
+  it("drops expired entries before enforcing capacity and tracks stats", () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(0);
+    const cache = __internalCreateCache(1, 50);
+
+    cache.set("a", "one");
+    now.mockReturnValue(60); // expired
+    cache.set("b", "two"); // should purge expired "a" before size check
+
+    expect(cache.get("b")).toBe("two");
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.stats()).toEqual({ size: 1, hits: 1, misses: 1, evictions: 1, ttlMs: 50 });
+
+    now.mockRestore();
+  });
+
+  it("isolates rate limits per action when configured", () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "perAction",
+    });
+
+    expect(limiter.take("one").allowed).toBe(true);
+    expect(limiter.take("one").allowed).toBe(false);
+    expect(limiter.take("two").allowed).toBe(true);
+    now.mockRestore();
+  });
+
+  it("tracks retryAfter per client bucket", () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "perClient",
+    });
+
+    expect(limiter.take("action", "client-a")).toEqual({ allowed: true, retryAfterMs: 0 });
+    now.mockReturnValue(500);
+    expect(limiter.take("action", "client-a")).toEqual({ allowed: false, retryAfterMs: 500 });
+    expect(limiter.take("action", "client-b")).toEqual({ allowed: true, retryAfterMs: 0 });
+    now.mockRestore();
+  });
+
+  it("uses default bucket keys when action is blank", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "perAction",
+    });
+
+    expect(limiter.take("").allowed).toBe(true);
+    expect(limiter.take("").allowed).toBe(false); // shares the default bucket
+    now.mockRestore();
   });
 
   it("maps rate limit overflow to TOO_MANY_REQUESTS and logs metadata", () => {
@@ -569,6 +817,7 @@ describe("rate limiting and caching helpers", () => {
     });
     expect(warn).toHaveBeenCalledWith("Rate limit exceeded", {
       action: "limited-action",
+      rateLimitKey: undefined,
       retryAfterMs: 250,
     });
   });
@@ -584,6 +833,93 @@ describe("rate limiting and caching helpers", () => {
     expect(() => helpers.enforceRateLimit("limited-action", {} as any)).toThrow(
       new RouterConfigError("TOO_MANY_REQUESTS constructor missing for rate limiting")
     );
+  });
+
+  it("passes username as rate limit key when available", async () => {
+    const take = vi.fn().mockReturnValue({ allowed: true, retryAfterMs: 0 });
+    const context = {
+      ...buildMockContext(),
+      rateLimiter: { take },
+      cache: __internalCreateCache(1, 1000),
+    };
+    const helpers = __internalCreateRouterHelpers(context as any);
+    const handler = helpers.makeHandler<{ username: string }, { ok: string }>(
+      "user-action",
+      async ({ input }) => ({ ok: input.username }),
+      () => ({})
+    );
+
+    const result = await handler({
+      input: { username: "alice" },
+      errors: {},
+    } as any);
+
+    expect(result).toEqual({ ok: "alice" });
+    expect(take).toHaveBeenCalledWith("user-action", "alice");
+  });
+
+  it("falls back to clientId for rate limit key when username is missing", async () => {
+    const take = vi.fn().mockReturnValue({ allowed: true, retryAfterMs: 0 });
+    const context = {
+      ...buildMockContext(),
+      rateLimiter: { take },
+      cache: __internalCreateCache(1, 1000),
+    };
+    const helpers = __internalCreateRouterHelpers(context as any);
+    const handler = helpers.makeHandler<{ clientId: string }, { ok: string }>(
+      "client-action",
+      async ({ input }) => ({ ok: input.clientId }),
+      () => ({})
+    );
+
+    const result = await handler({
+      input: { clientId: "client-123" },
+      errors: {},
+    } as any);
+
+    expect(result).toEqual({ ok: "client-123" });
+    expect(take).toHaveBeenCalledWith("client-action", "client-123");
+  });
+
+  it("ignores userApiKey for rate limit keys and logging", async () => {
+    const warn = vi.fn();
+    const take = vi.fn().mockReturnValue({ allowed: false, retryAfterMs: 75 });
+    const context = {
+      ...buildMockContext(),
+      logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn,
+        error: vi.fn(),
+      },
+      rateLimiter: { take },
+      cache: __internalCreateCache(1, 1000),
+    };
+    const helpers = __internalCreateRouterHelpers(context as any);
+    const errors = {
+      TOO_MANY_REQUESTS: vi.fn(() => new Error("limited")),
+    };
+
+    const handler = helpers.makeHandler(
+      "user-api-action",
+      async () => ({ ok: true }),
+      () => ({})
+    );
+
+    await expect(
+      handler({
+        input: { userApiKey: "super-secret-key" },
+        errors,
+      } as any)
+    ).rejects.toThrow("limited");
+
+    expect(take).toHaveBeenCalledWith("user-api-action", undefined);
+    expect(warn).toHaveBeenCalledWith("Rate limit exceeded", {
+      action: "user-api-action",
+      rateLimitKey: undefined,
+      retryAfterMs: 75,
+    });
+    expect(warn.mock.calls[0]?.[1]).not.toHaveProperty("userApiKey");
   });
 });
 
@@ -767,6 +1103,113 @@ describe("createRouter retry policy wiring", () => {
     ).rejects.toThrow("BAD_REQUEST constructor missing");
   });
 
+  it("requires clientId to match nonce owner when completing link", async () => {
+    const metrics = { retryAttempts: 0, nonceEvictions: 0 };
+    const nonceManager = new NonceManager({ ttlMs: 1000 });
+    const nonce = nonceManager.create("client-123", "private-key");
+    const context: any = {
+      discourseService: {
+        getCurrentUser: vi.fn().mockResolvedValue({ username: "user", id: 1 }),
+      },
+      cryptoService: {
+        decryptPayload: vi.fn().mockResolvedValue("user-api-key"),
+      },
+      nonceManager,
+      config: {
+        variables: {
+          discourseBaseUrl: "https://example.com",
+          discourseApiUsername: "system",
+          clientId: "client",
+          requestTimeoutMs: 1000,
+          nonceTtlMs: 1000,
+          nonceCleanupIntervalMs: 1000,
+          userApiScopes: normalizeUserApiScopes(["read"]),
+          logBodySnippetLength: 50,
+        },
+        secrets: { discourseApiKey: "key" },
+      },
+      logger: createSafeLogger(noopLogger),
+      normalizedUserApiScopes: normalizeUserApiScopes(["read"]),
+      cleanupFiber: null,
+      bodySnippetLength: 50,
+      metrics,
+    };
+
+    const errors = {
+      BAD_REQUEST: vi.fn(({ message }) => new Error(message)),
+    };
+    const router = makeRouter(context);
+
+    await expect(
+      router.completeLink({
+        input: { nonce, payload: "enc", clientId: "wrong-client" },
+        errors,
+      })
+    ).rejects.toThrow("Invalid or expired nonce");
+
+    const result = await router.completeLink({
+      input: { nonce, payload: "enc", clientId: "client-123" },
+      errors,
+    });
+
+    expect(result).toEqual({
+      userApiKey: "user-api-key",
+      discourseUsername: "user",
+      discourseUserId: 1,
+    });
+    expect(context.cryptoService.decryptPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects replay of consumed nonce", async () => {
+    const metrics = { retryAttempts: 0, nonceEvictions: 0 };
+    const nonceManager = new NonceManager({ ttlMs: 1000 });
+    const nonce = nonceManager.create("client-123", "private-key");
+    const context: any = {
+      discourseService: {
+        getCurrentUser: vi.fn().mockResolvedValue({ username: "user", id: 1 }),
+      },
+      cryptoService: {
+        decryptPayload: vi.fn().mockResolvedValue("user-api-key"),
+      },
+      nonceManager,
+      config: {
+        variables: {
+          discourseBaseUrl: "https://example.com",
+          discourseApiUsername: "system",
+          clientId: "client",
+          requestTimeoutMs: 1000,
+          nonceTtlMs: 1000,
+          nonceCleanupIntervalMs: 1000,
+          userApiScopes: normalizeUserApiScopes(["read"]),
+          logBodySnippetLength: 50,
+        },
+        secrets: { discourseApiKey: "key" },
+      },
+      logger: createSafeLogger(noopLogger),
+      normalizedUserApiScopes: normalizeUserApiScopes(["read"]),
+      cleanupFiber: null,
+      bodySnippetLength: 50,
+      metrics,
+    };
+
+    const errors = {
+      BAD_REQUEST: vi.fn(({ message }) => new Error(message)),
+    };
+    const router = makeRouter(context);
+
+    await router.completeLink({
+      input: { nonce, payload: "enc", clientId: "client-123" },
+      errors,
+    });
+
+    await expect(
+      router.completeLink({
+        input: { nonce, payload: "enc", clientId: "client-123" },
+        errors,
+      })
+    ).rejects.toThrow("Invalid or expired nonce");
+  });
+
   it("normalizes invalid retry overrides to safe defaults", async () => {
     const searchMock = vi.fn(() => Effect.fail(new Error("transport")));
     const metrics = { retryAttempts: 0, nonceEvictions: 0 };
@@ -941,7 +1384,7 @@ describe("createRouter retry policy wiring", () => {
     const stats = cache.stats();
 
     expect(fetched).toBeUndefined();
-    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, ttlMs: 0 });
+    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 0 });
   });
 
   it("treats invalid cache size as disabled while preserving ttl metadata", () => {
@@ -952,7 +1395,7 @@ describe("createRouter retry policy wiring", () => {
     const stats = cache.stats();
 
     expect(fetched).toBeUndefined();
-    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, ttlMs: 100 });
+    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 100 });
   });
 
   it("exposes cache stats when cache is omitted", () => {
@@ -962,7 +1405,60 @@ describe("createRouter retry policy wiring", () => {
       cache: undefined,
     } as any);
 
-    expect(helpers.cacheStats()).toEqual({ size: 0, hits: 0, misses: 0, ttlMs: 0 });
+    expect(helpers.cacheStats()).toEqual({
+      size: 0,
+      hits: 0,
+      misses: 0,
+      evictions: 0,
+      ttlMs: 0,
+    });
+  });
+
+  it("evicts cache entries by prefix when supported", () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const cache = __internalCreateCache(3, 1000, { logger });
+
+    cache.set("posts:1", "one");
+    cache.set("posts:2", "two");
+    cache.set("topics:1", "topic");
+
+    const removed = cache.deleteByPrefix?.("posts:") ?? 0;
+
+    expect(removed).toBe(2);
+    expect(cache.get("topics:1")).toBe("topic");
+    expect(cache.stats()).toEqual({ size: 1, hits: 1, misses: 0, evictions: 2, ttlMs: 1000 });
+    expect(logger.debug).toHaveBeenCalledWith(
+      "Cache eviction",
+      expect.objectContaining({ reason: "prefix", prefix: "posts:" })
+    );
+  });
+
+  it("skips prefix invalidation when cache does not support it", () => {
+    const cache = {
+      get: vi.fn(),
+      set: vi.fn(),
+      delete: vi.fn(),
+      stats: vi.fn(() => ({ size: 0, hits: 0, misses: 0, evictions: 0, ttlMs: 0 })),
+    };
+    const helpers = __internalCreateRouterHelpers({
+      ...buildMockContext(),
+      cache,
+    } as any);
+
+    expect(() => helpers.invalidateCacheByPrefix(["posts:"])).not.toThrow();
+    expect(cache.delete).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined rate limit key for non-object inputs", () => {
+    const helpers = __internalCreateRouterHelpers(buildMockContext() as any);
+
+    expect(helpers.resolveRateLimitKey(null as any)).toBeUndefined();
+    expect(helpers.resolveRateLimitKey(42 as any)).toBeUndefined();
   });
 });
 
@@ -1659,6 +2155,7 @@ describe("validateUserApiKey router mapping", () => {
       clientId: "client",
       requestTimeoutMs: 1000,
       requestsPerSecond: 5,
+      rateLimitStrategy: "global",
       cacheMaxSize: 10,
       cacheTtlMs: 1000,
       nonceTtlMs: 2000,

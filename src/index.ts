@@ -93,7 +93,7 @@ export type MakeHandler = <I, O>(
 ) => (args: { input: I; errors: PluginErrorConstructors }) => Promise<O>;
 
 type RateLimiter = {
-  take: () => { allowed: boolean; retryAfterMs: number };
+  take: (action: string, clientId?: string) => { allowed: boolean; retryAfterMs: number };
 };
 
 type CacheEntry<T> = {
@@ -104,7 +104,9 @@ type CacheEntry<T> = {
 type Cache = {
   get: <T>(key: string) => T | undefined;
   set: <T>(key: string, value: T) => void;
-  stats: () => { size: number; hits: number; misses: number; ttlMs: number };
+  delete: (key: string) => void;
+  deleteByPrefix?: (prefix: string) => number;
+  stats: () => { size: number; hits: number; misses: number; evictions: number; ttlMs: number };
 };
 
 type WithErrorLoggingDeps = {
@@ -113,78 +115,230 @@ type WithErrorLoggingDeps = {
   nonceManager: NonceManager;
   config: DiscoursePluginConfig;
   bodySnippetLength?: number;
+  metrics?: { retryAttempts: number };
 };
 
-const createRateLimiter = (requestsPerSecond: number): RateLimiter => {
-  const rate = Number.isFinite(requestsPerSecond) && requestsPerSecond > 0 ? requestsPerSecond : 1;
-  const capacity = Math.max(1, rate);
-  let tokens = capacity;
-  let lastRefill = Date.now();
+type RateLimitStrategy = "global" | "perAction" | "perClient" | "perActionClient";
 
-  return {
-    take: () => {
-      const now = Date.now();
-      const elapsedMs = now - lastRefill;
-      if (elapsedMs > 0) {
-        const refill = Math.floor((elapsedMs / 1000) * rate);
-        if (refill > 0) {
-          tokens = Math.min(capacity, tokens + refill);
-          lastRefill = now;
+const createRateLimiter = (params: {
+  requestsPerSecond: number;
+  strategy?: RateLimitStrategy;
+  maxBuckets?: number;
+  bucketTtlMs?: number;
+}): RateLimiter => {
+  const rate =
+    Number.isFinite(params.requestsPerSecond) && params.requestsPerSecond > 0
+      ? params.requestsPerSecond
+      : 1;
+  const capacity = Math.max(1, rate);
+  const strategy = params.strategy ?? "global";
+  const maxBucketsInput = params.maxBuckets ?? Number.NaN;
+  const maxBuckets =
+    Number.isFinite(maxBucketsInput) && maxBucketsInput > 0
+      ? Math.floor(maxBucketsInput)
+      : null;
+  const bucketTtlMsInput = params.bucketTtlMs ?? Number.NaN;
+  const bucketTtlMs =
+    Number.isFinite(bucketTtlMsInput) && bucketTtlMsInput > 0
+      ? bucketTtlMsInput
+      : null;
+  const buckets = new Map<
+    string,
+    {
+      tokens: number;
+      lastRefill: number;
+    }
+  >();
+
+  const resolveKey = (action: string, clientId?: string) => {
+    const safeAction = action || "default";
+    const safeClient = clientId?.trim() || "default";
+    if (strategy === "perAction") return `action:${safeAction}`;
+    if (strategy === "perClient") return `client:${safeClient}`;
+    if (strategy === "perActionClient") return `action-client:${safeAction}:${safeClient}`;
+    return "global";
+  };
+
+  const purgeIdleBuckets = (now: number) => {
+    if (bucketTtlMs) {
+      for (const [key, bucket] of buckets) {
+        if (now - bucket.lastRefill > bucketTtlMs) {
+          buckets.delete(key);
         }
       }
+    }
+  };
 
-      if (tokens >= 1) {
-        tokens -= 1;
-        return { allowed: true, retryAfterMs: 0 };
+  const getBucket = (key: string) => {
+    const now = Date.now();
+    purgeIdleBuckets(now);
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      if (maxBuckets) {
+        while (buckets.size >= maxBuckets) {
+          const oldestKey = buckets.keys().next().value!;
+          buckets.delete(oldestKey);
+        }
       }
+      bucket = { tokens: capacity, lastRefill: Date.now() };
+      buckets.set(key, bucket);
+    }
+    return bucket;
+  };
 
-      const retryAfterMs = Math.max(0, 1000 - (now - lastRefill));
-      return { allowed: false, retryAfterMs };
+  const takeFromBucket = (bucket: { tokens: number; lastRefill: number }) => {
+    const now = Date.now();
+    const elapsedMs = now - bucket.lastRefill;
+    if (elapsedMs > 0) {
+      const refill = (elapsedMs / 1000) * rate;
+      bucket.tokens = Math.min(capacity, bucket.tokens + refill);
+      bucket.lastRefill = now;
+    }
+
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return { allowed: true as const, retryAfterMs: 0 };
+    }
+
+    const missingTokens = 1 - Math.max(0, bucket.tokens);
+    const retryAfterMs = Math.max(0, Math.ceil((missingTokens / rate) * 1000));
+    return { allowed: false as const, retryAfterMs };
+  };
+
+  return {
+    take: (action: string, clientId?: string) => {
+      purgeIdleBuckets(Date.now());
+      const key = resolveKey(action, clientId);
+      const bucket = getBucket(key);
+      return takeFromBucket(bucket);
     },
   };
 };
 
-const createCache = (maxSize: number, ttlMs: number): Cache => {
+const createCache = (
+  maxSize: number,
+  ttlMs: number,
+  options?: { logger?: SafeLogger; now?: () => number }
+): Cache => {
   const capacity = Number.isFinite(maxSize) && maxSize > 0 ? Math.floor(maxSize) : 0;
   const safeTtlMs = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : 0;
   const map = new Map<string, CacheEntry<unknown>>();
   let hits = 0;
   let misses = 0;
+  let evictions = 0;
+  const logger = options?.logger;
+  const now = options?.now ?? (() => Date.now());
+
+  const logDebug = (message: string, meta?: Record<string, unknown>) => {
+    logger?.debug?.(message, normalizeMeta(meta));
+  };
+
+  if (capacity === 0 || safeTtlMs <= 0) {
+    logDebug("Cache disabled", { action: "cache-init", maxSize, ttlMs: safeTtlMs });
+  }
+
+  const purgeExpired = () => {
+    if (safeTtlMs <= 0) return;
+    const nowMs = now();
+    for (const [key, entry] of map.entries()) {
+      if (entry.expiresAt < nowMs) {
+        map.delete(key);
+        evictions += 1;
+        logDebug("Cache eviction", {
+          action: "cache-evict",
+          reason: "expired",
+          key,
+          ttlMs: safeTtlMs,
+        });
+      }
+    }
+  };
 
   const get = <T>(key: string): T | undefined => {
+    purgeExpired();
     const entry = map.get(key);
     if (!entry) {
       misses += 1;
       return undefined;
     }
-    if (entry.expiresAt < Date.now()) {
+    const nowMs = now();
+    if (entry.expiresAt < nowMs) {
       map.delete(key);
+      evictions += 1;
+      logDebug("Cache eviction", {
+        action: "cache-evict",
+        reason: "expired",
+        key,
+        ttlMs: safeTtlMs,
+      });
       misses += 1;
       return undefined;
     }
     hits += 1;
+    // Refresh recency by moving to the back.
+    map.delete(key);
+    map.set(key, entry);
     return entry.value as T;
   };
 
   const set = <T>(key: string, value: T) => {
     if (capacity === 0 || safeTtlMs <= 0) return;
-    if (map.size >= capacity) {
-      const oldestKey = map.keys().next().value;
-      if (oldestKey !== undefined) {
-        map.delete(oldestKey);
+    purgeExpired();
+    // Replace existing to move it to the back.
+    if (map.has(key)) {
+      map.delete(key);
+    }
+    while (map.size >= capacity) {
+      const oldestKey = map.keys().next().value!;
+      map.delete(oldestKey);
+      evictions += 1;
+      logDebug("Cache eviction", {
+        action: "cache-evict",
+        reason: "capacity",
+        key: oldestKey,
+        ttlMs: safeTtlMs,
+      });
+    }
+    map.set(key, { value, expiresAt: now() + safeTtlMs });
+  };
+
+  /* c8 ignore start */
+  const del = (key: string) => {
+    if (map.delete(key)) {
+      evictions += 1;
+      logDebug("Cache eviction", { action: "cache-evict", reason: "manual", key });
+    }
+  };
+  /* c8 ignore stop */
+
+  const deleteByPrefix = (prefix: string) => {
+    let removed = 0;
+    for (const key of map.keys()) {
+      if (key.startsWith(prefix)) {
+        map.delete(key);
+        removed += 1;
+        evictions += 1;
+        logDebug("Cache eviction", {
+          action: "cache-evict",
+          reason: "prefix",
+          key,
+          prefix,
+        });
       }
     }
-    map.set(key, { value, expiresAt: Date.now() + safeTtlMs });
+    return removed;
   };
 
   const stats = () => ({
+    ...(purgeExpired(), {}),
     size: map.size,
     hits,
     misses,
+    evictions,
     ttlMs: safeTtlMs,
   });
 
-  return { get, set, stats };
+  return { get, set, delete: del, deleteByPrefix, stats };
 };
 
 const unwrapRunFailure = (error: unknown) => {
@@ -212,14 +366,19 @@ const logFailure = (params: {
   error: unknown;
   logMeta?: Record<string, unknown>;
   bodySnippetLength: number;
+  attempt?: number;
 }) => {
-  const { log, action, error, logMeta, bodySnippetLength } = params;
-  log("error", `${action} failed`, {
+  const { log, action, error, logMeta, bodySnippetLength, attempt } = params;
+  const meta = {
     action,
     ...logMeta,
     error: sanitizeErrorForLog(error, bodySnippetLength),
-    attempt: 1,
-  });
+  };
+  if (typeof attempt === "number") {
+    (meta as any).attempt = attempt;
+  }
+
+  log("error", `${action} failed`, meta);
 };
 
 const mapPluginErrorWithRetryAfter = (
@@ -243,6 +402,7 @@ export const createWithErrorLogging = (deps: WithErrorLoggingDeps) => {
     nonceManager,
     config,
     bodySnippetLength = DEFAULT_BODY_SNIPPET_LENGTH,
+    metrics,
   } = deps;
 
   return <T>(
@@ -251,8 +411,14 @@ export const createWithErrorLogging = (deps: WithErrorLoggingDeps) => {
     errors?: PluginErrorConstructors,
     logMeta?: Record<string, unknown>
   ) => {
+    let attempt = 0;
+
     const executeOnce = (): Effect.Effect<T, unknown> =>
       Effect.gen(function* () {
+        attempt += 1;
+        if (metrics && attempt > 1) {
+          metrics.retryAttempts += 1;
+        }
         const attemptResult = yield* Effect.tryPromise({
           try: fn,
           catch: (error) => error,
@@ -274,6 +440,7 @@ export const createWithErrorLogging = (deps: WithErrorLoggingDeps) => {
             error: underlyingError,
             logMeta,
             bodySnippetLength,
+            attempt,
           })
         );
 
@@ -336,13 +503,20 @@ type RouterHelpers = {
   run: RunEffect;
   withErrorLogging: ReturnType<typeof createWithErrorLogging>;
   makeHandler: MakeHandler;
-  enforceRateLimit: (action: string, errors: PluginErrorConstructors) => void;
+  enforceRateLimit: (
+    action: string,
+    errors: PluginErrorConstructors,
+    clientId?: string
+  ) => void;
+  resolveRateLimitKey: (input: unknown) => string | undefined;
   withCache: <T>(params: {
     action: string;
     key: string;
     fetch: () => Promise<T>;
   }) => Promise<T>;
-  cacheStats: () => { size: number; hits: number; misses: number; ttlMs: number };
+  invalidateCache: (keys: string[]) => void;
+  invalidateCacheByPrefix: (prefixes: string[]) => void;
+  cacheStats: () => { size: number; hits: number; misses: number; evictions: number; ttlMs: number };
 };
 
 const createRouterHelpers = (context: PluginContext): RouterHelpers => {
@@ -351,6 +525,7 @@ const createRouterHelpers = (context: PluginContext): RouterHelpers => {
     bodySnippetLength,
     nonceManager,
     config,
+    metrics,
     rateLimiter: providedRateLimiter,
     cache: providedCache,
   } = context;
@@ -364,7 +539,9 @@ const createRouterHelpers = (context: PluginContext): RouterHelpers => {
     ({
       get: () => undefined,
       set: () => {},
-      stats: () => ({ size: 0, hits: 0, misses: 0, ttlMs: 0 }),
+      delete: () => {},
+      deleteByPrefix: () => 0,
+      stats: () => ({ size: 0, hits: 0, misses: 0, evictions: 0, ttlMs: 0 }),
     } satisfies Cache);
 
   const log: LogFn = (level, message, meta) => {
@@ -379,10 +556,15 @@ const createRouterHelpers = (context: PluginContext): RouterHelpers => {
     nonceManager,
     config,
     bodySnippetLength,
+    metrics,
   });
 
-  const enforceRateLimit = (action: string, errors: PluginErrorConstructors) => {
-    const result = rateLimiter.take();
+  const enforceRateLimit = (
+    action: string,
+    errors: PluginErrorConstructors,
+    clientId?: string
+  ) => {
+    const result = rateLimiter.take(action, clientId);
     if (result.allowed) {
       return;
     }
@@ -394,6 +576,7 @@ const createRouterHelpers = (context: PluginContext): RouterHelpers => {
 
     log("warn", "Rate limit exceeded", {
       action,
+      rateLimitKey: clientId,
       retryAfterMs: result.retryAfterMs,
     });
 
@@ -417,7 +600,8 @@ const createRouterHelpers = (context: PluginContext): RouterHelpers => {
       logMeta?: (input: I) => Record<string, unknown>
     ) =>
     async ({ input, errors }: { input: I; errors: PluginErrorConstructors }) => {
-      enforceRateLimit(action, errors);
+      const rateLimitKey = resolveRateLimitKey(input);
+      enforceRateLimit(action, errors, rateLimitKey);
       return withErrorLogging(
         action,
         () => {
@@ -451,7 +635,37 @@ const createRouterHelpers = (context: PluginContext): RouterHelpers => {
 
   const cacheStats = () => cache.stats();
 
-  return { log, run, withErrorLogging, makeHandler, enforceRateLimit, withCache, cacheStats };
+  const invalidateCache = (keys: string[]) => {
+    keys.forEach((key) => cache.delete(key));
+  };
+
+  const invalidateCacheByPrefix = (prefixes: string[]) => {
+    const deleteByPrefix = cache.deleteByPrefix;
+    if (!deleteByPrefix) return;
+    prefixes.forEach((prefix) => deleteByPrefix(prefix));
+  };
+
+  const resolveRateLimitKey = (input: unknown): string | undefined => {
+    if (!input || typeof input !== "object") return undefined;
+    const maybeString = (value: unknown) =>
+      typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+    const candidate =
+      maybeString((input as any).username) ?? maybeString((input as any).clientId);
+    return candidate;
+  };
+
+  return {
+    log,
+    run,
+    withErrorLogging,
+    makeHandler,
+    enforceRateLimit,
+    withCache,
+    invalidateCache,
+    invalidateCacheByPrefix,
+    resolveRateLimitKey,
+    cacheStats,
+  };
 };
 
 // Expose for testing without expanding the public surface area.
@@ -485,7 +699,17 @@ const buildAllRouters = ({
     config,
     cleanupFiber,
   } = context;
-  const { log, run, withErrorLogging, makeHandler, enforceRateLimit, withCache, cacheStats } = helpers;
+  const {
+    log,
+    run,
+    withErrorLogging,
+    makeHandler,
+    enforceRateLimit,
+    withCache,
+    invalidateCache,
+    invalidateCacheByPrefix,
+    cacheStats,
+  } = helpers;
 
   const uploadsRouter = buildUploadsRouter({
     builder,
@@ -530,6 +754,8 @@ const buildAllRouters = ({
       run,
       makeHandler,
       withCache,
+      invalidateCache,
+      invalidateCacheByPrefix,
       RouterConfigError,
     }),
     buildSearchRouter({
@@ -546,6 +772,8 @@ const buildAllRouters = ({
       run,
       makeHandler,
       withCache,
+      invalidateCache,
+      invalidateCacheByPrefix,
     }),
     buildUsersRouter({
       builder,
@@ -578,10 +806,14 @@ const discoursePlugin = createPlugin({
     Effect.gen(function* () {
       const logger = createSafeLogger(config.logger ?? noopLogger);
       const metrics = { retryAttempts: 0, nonceEvictions: 0 };
-      const rateLimiter = createRateLimiter(config.variables.requestsPerSecond);
+      const rateLimiter = createRateLimiter({
+        requestsPerSecond: config.variables.requestsPerSecond,
+        strategy: config.variables.rateLimitStrategy,
+      });
       const cache = createCache(
         config.variables.cacheMaxSize,
-        config.variables.cacheTtlMs
+        config.variables.cacheTtlMs,
+        { logger }
       );
       const normalizedUserApiScopes = normalizeUserApiScopes(
         config.variables.userApiScopes

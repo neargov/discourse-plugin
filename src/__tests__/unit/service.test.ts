@@ -3446,29 +3446,29 @@ describe(
           })
         );
 
-        const result = await run(
-          service.deleteRevision({
-            postId: 9,
-            revision: 1,
-            username: "moderator",
-          })
-        );
-
-        expect(result).toEqual({ success: true });
+        await expect(
+          run(
+            service.deleteRevision({
+              postId: 9,
+              revision: 1,
+              username: "moderator",
+            })
+          )
+        ).rejects.toThrow("Delete revision response missing explicit success flag");
       });
 
       it("defaults delete revision success when body is empty", async () => {
         fetchMock.mockResolvedValueOnce(emptyRes());
 
-        const result = await run(
-          service.deleteRevision({
-            postId: 9,
-            revision: 2,
-            username: "moderator",
-          })
-        );
-
-        expect(result).toEqual({ success: true });
+        await expect(
+          run(
+            service.deleteRevision({
+              postId: 9,
+              revision: 2,
+              username: "moderator",
+            })
+          )
+        ).rejects.toThrow("Delete revision response missing explicit success flag");
       });
 
       it("surfaces errors when revision fetch fails", async () => {

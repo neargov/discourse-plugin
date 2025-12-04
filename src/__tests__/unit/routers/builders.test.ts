@@ -38,6 +38,7 @@ const baseConfig = {
     discourseApiUsername: "system",
     clientId: "client",
     requestTimeoutMs: 1_000,
+    rateLimitStrategy: "global",
     nonceTtlMs: 1_000,
     nonceCleanupIntervalMs: 1_000,
     userApiScopes: normalizeUserApiScopes(["read", "write"]),
@@ -258,6 +259,60 @@ describe("router builders", () => {
     expect(discourseService.listPosts).toHaveBeenCalledTimes(1);
   });
 
+  it("invalidates caches after post mutations", async () => {
+    const builder = makeBuilder();
+    const invalidateCache = vi.fn();
+    const invalidateCacheByPrefix = vi.fn();
+    const discourseService = {
+      createPost: vi.fn().mockResolvedValue({
+        topic_id: 7,
+        topic_slug: "topic-slug",
+        id: 42,
+      }),
+      resolvePath: (path: string) => path,
+    } as any;
+
+    const router = buildPostsRouter({
+      builder,
+      discourseService,
+      log,
+      run,
+      makeHandler: (_action, effect) => effect as any,
+      invalidateCache,
+      invalidateCacheByPrefix,
+    });
+
+    const errors = {
+      SERVICE_UNAVAILABLE: vi.fn(({ message }) => new Error(message)),
+    };
+
+    await router.createPost({
+      input: {
+        title: "Title",
+        raw: "Body",
+        category: 1,
+        topicId: undefined,
+        replyToPostNumber: undefined,
+        username: "user",
+      },
+      errors: errors as any,
+    });
+
+    expect(invalidateCache).toHaveBeenCalledWith([
+      "post:42:raw:false",
+      "post:42:raw:true",
+      "post:42:replies",
+    ]);
+    expect(invalidateCache).toHaveBeenCalledWith(["topic:7"]);
+    expect(invalidateCacheByPrefix).toHaveBeenCalledWith(["posts:list:"]);
+    expect(invalidateCacheByPrefix).toHaveBeenCalledWith([
+      "topics:latest:",
+      "topics:list:",
+      "topics:top:",
+      "topics:category:",
+    ]);
+  });
+
   it("topics router exposes expected handlers", () => {
     const builder = makeBuilder();
     const router = buildTopicsRouter({
@@ -266,6 +321,9 @@ describe("router builders", () => {
       log,
       run,
       makeHandler: (_action, effect) => effect as any,
+      withCache: ({ fetch }) => fetch(),
+      invalidateCache: () => {},
+      invalidateCacheByPrefix: () => {},
     });
 
     expect(Object.keys(router).sort()).toEqual(
@@ -284,6 +342,45 @@ describe("router builders", () => {
         "addTopicTimer",
       ].sort()
     );
+  });
+
+  it("invalidates caches after topic updates", async () => {
+    const builder = makeBuilder();
+    const invalidateCache = vi.fn();
+    const invalidateCacheByPrefix = vi.fn();
+    const discourseService = {
+      updateTopicStatus: vi.fn().mockResolvedValue({ success: true }),
+    } as any;
+
+    const router = buildTopicsRouter({
+      builder,
+      discourseService,
+      log,
+      run,
+      makeHandler: (_action, effect) => effect as any,
+      withCache: ({ fetch }) => fetch(),
+      invalidateCache,
+      invalidateCacheByPrefix,
+    });
+
+    await router.updateTopicStatus({
+      input: {
+        topicId: 11,
+        status: "pinned",
+        enabled: true,
+        username: "user",
+        userApiKey: "key",
+      },
+      errors: {} as any,
+    });
+
+    expect(invalidateCache).toHaveBeenCalledWith(["topic:11"]);
+    expect(invalidateCacheByPrefix).toHaveBeenCalledWith([
+      "topics:latest:",
+      "topics:list:",
+      "topics:top:",
+      "topics:category:",
+    ]);
   });
 
   it("users router exposes expected handlers", () => {
