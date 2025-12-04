@@ -1,4 +1,5 @@
 import type { Implementer } from "every-plugin/orpc";
+import type { Effect } from "every-plugin/effect";
 import type { CryptoService, DiscourseService, NonceManager } from "../service";
 import type { contract } from "../contract";
 import type {
@@ -49,55 +50,16 @@ export const buildAuthRouter = (params: {
       ...meta,
     });
 
-  const resolve = async <T>(value: unknown): Promise<T> => {
-    if (value && typeof (value as any).then === "function") {
-      return value as Promise<T>;
-    }
-    return run(value as any);
-  };
+  const resolveAsync = <T>(value: Promise<T> | Effect.Effect<T, any, never>) =>
+    value && typeof (value as any).then === "function"
+      ? (value as Promise<T>)
+      : run(value as Effect.Effect<T, any, never>);
 
   const requireBadRequest = (errors: PluginErrorConstructors) => {
     if (!errors.BAD_REQUEST) {
       throw new RouterConfigError("BAD_REQUEST constructor missing");
     }
     return errors.BAD_REQUEST;
-  };
-
-  const getActiveNonceOrThrow = (
-    nonce: string,
-    clientId: string | undefined,
-    errors: PluginErrorConstructors
-  ) => {
-    const badRequest = requireBadRequest(errors);
-    const nonceData = nonceManager.get(nonce);
-    if (!nonceData) {
-      logNonceLookup({
-        status: "missing",
-        nonceSuffix: nonce.slice(-6),
-      });
-      throw badRequest({
-        message: "Invalid or expired nonce",
-        data: {},
-      });
-    }
-    const verified = nonceManager.verify(nonce, nonceData.clientId);
-    const normalizedClientId = typeof clientId === "string" ? clientId.trim() : "";
-    const clientIdMatch =
-      normalizedClientId.length === 0 || nonceData.clientId === normalizedClientId;
-
-    logNonceLookup({
-      status: verified && clientIdMatch ? "verified" : "invalid",
-      nonceSuffix: nonce.slice(-6),
-      clientId: nonceData.clientId,
-      providedClientId: clientId,
-    });
-    if (!verified || !clientIdMatch) {
-      throw badRequest({
-        message: "Invalid or expired nonce",
-        data: {},
-      });
-    }
-    return nonceData;
   };
 
   return {
@@ -142,14 +104,58 @@ export const buildAuthRouter = (params: {
 
     completeLink: builder.completeLink.handler(
       makeHandler("complete-link", async ({ input, errors }) => {
-        const nonceData = getActiveNonceOrThrow(input.nonce, input.clientId, errors);
+        const badRequest = requireBadRequest(errors);
+        const nonceData = nonceManager.get(input.nonce);
+        if (!nonceData) {
+          logNonceLookup({
+            status: "missing",
+            nonceSuffix: input.nonce.slice(-6),
+          });
+          throw badRequest({
+            message: "Invalid or expired nonce",
+            data: {},
+          });
+        }
+
+        const normalizedClientId =
+          typeof input.clientId === "string" ? input.clientId.trim() : "";
+
+        if (normalizedClientId && nonceData.clientId !== normalizedClientId) {
+          logNonceLookup({
+            status: "invalid",
+            nonceSuffix: input.nonce.slice(-6),
+            clientId: nonceData.clientId,
+            providedClientId: input.clientId,
+          });
+          throw badRequest({
+            message: "Invalid or expired nonce",
+            data: {},
+          });
+        }
+
+        const verified = nonceManager.verify(input.nonce, nonceData.clientId);
+
+        logNonceLookup({
+          status: verified ? "verified" : "invalid",
+          nonceSuffix: input.nonce.slice(-6),
+          clientId: nonceData.clientId,
+          providedClientId: input.clientId,
+        });
+        if (!verified) {
+          throw badRequest({
+            message: "Invalid or expired nonce",
+            data: {},
+          });
+        }
 
         try {
           let userApiKey: string;
           try {
-            userApiKey = await resolve<string>(
-              cryptoService.decryptPayload(input.payload, nonceData.privateKey)
+            const decrypted = cryptoService.decryptPayload(
+              input.payload,
+              nonceData.privateKey
             );
+            userApiKey = await resolveAsync(decrypted);
           } catch (error) {
             log("warn", "Failed to decrypt Discourse payload", {
               action: "complete-link",
@@ -161,7 +167,7 @@ export const buildAuthRouter = (params: {
             });
           }
 
-          const discourseUser = await resolve<Awaited<ReturnType<typeof discourseService.getCurrentUser>>>(
+          const discourseUser = await resolveAsync(
             discourseService.getCurrentUser(userApiKey)
           );
 
@@ -183,7 +189,7 @@ export const buildAuthRouter = (params: {
 
     validateUserApiKey: builder.validateUserApiKey.handler(
       makeHandler("validate-user-api-key", async ({ input, errors }) => {
-        const result = await resolve<Awaited<ReturnType<typeof discourseService.validateUserApiKey>>>(
+        const result = await run(
           discourseService.validateUserApiKey(input.userApiKey)
         );
 

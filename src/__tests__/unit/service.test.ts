@@ -77,15 +77,17 @@ const run: RunEffect = (eff) => Effect.runPromise(eff);
 
 const makeErrors = () => {
   const tooManyRequests = vi.fn((payload: any) => ({ code: "TOO_MANY", payload })) as any;
+  const rateLimited = vi.fn((payload: any) => ({ code: "RATE_LIMITED", payload })) as any;
   const serviceUnavailable = vi.fn((payload: any) => ({
     code: "SERVICE_UNAVAILABLE",
     payload,
   })) as any;
 
   return {
-    hooks: { tooManyRequests, serviceUnavailable },
+    hooks: { tooManyRequests, rateLimited, serviceUnavailable },
     errors: {
       TOO_MANY_REQUESTS: tooManyRequests,
+      RATE_LIMITED: rateLimited,
       SERVICE_UNAVAILABLE: serviceUnavailable,
     },
   };
@@ -269,6 +271,36 @@ describe("mapDiscourseApiError", () => {
     expect(hooks.serviceUnavailable).not.toHaveBeenCalled();
   });
 
+  it("falls back to RATE_LIMITED when TOO_MANY_REQUESTS is missing", () => {
+    const { errors, hooks } = makeErrors();
+    const fallback = { mapped: "rate-limited" };
+    hooks.rateLimited.mockReturnValueOnce(fallback as any);
+
+    const error = new DiscourseApiError({
+      status: 429,
+      path: "/limited",
+      method: "POST",
+    });
+
+    const result = mapDiscourseApiError(error, {
+      ...errors,
+      TOO_MANY_REQUESTS: undefined,
+    });
+
+    expect(result).toBe(fallback);
+    expect(hooks.tooManyRequests).not.toHaveBeenCalled();
+    expect(hooks.rateLimited).toHaveBeenCalledWith({
+      message: error.message,
+      data: {
+        status: 429,
+        path: "/limited",
+        method: "POST",
+        retryAfterMs: undefined,
+        requestId: undefined,
+      },
+    });
+  });
+
   it("maps client timeout-style responses to TOO_MANY_REQUESTS", () => {
     const { errors, hooks } = makeErrors();
     const error = new DiscourseApiError({
@@ -356,9 +388,13 @@ describe("mapDiscourseApiError", () => {
       path: "/missing",
       method: "GET",
     });
-    expect(mapDiscourseApiError(apiError, { ...errors, TOO_MANY_REQUESTS: undefined })).toBe(
-      apiError
-    );
+    expect(
+      mapDiscourseApiError(apiError, {
+        ...errors,
+        TOO_MANY_REQUESTS: undefined,
+        RATE_LIMITED: undefined,
+      })
+    ).toBe(apiError);
   });
 
   it("returns DiscourseApiError unchanged for unmapped status codes", () => {
@@ -536,6 +572,38 @@ describe("createDiscourseDeps", () => {
         type: "global",
       })
     );
+  });
+
+  it("disables retries for write operations by default", () => {
+    const logger = {
+      error: vi.fn(),
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    const config = {
+      variables: {
+        discourseBaseUrl: "https://discuss.example.com",
+        discourseApiUsername: "system",
+        clientId: "client-id",
+        requestTimeoutMs: 1000,
+        nonceTtlMs: 1000,
+        nonceCleanupIntervalMs: 1000,
+        userApiScopes: ["read"],
+        logBodySnippetLength: 50,
+      },
+      secrets: { discourseApiKey: "key" },
+    };
+
+    const metrics = { retryAttempts: 0, nonceEvictions: 0 };
+    const { discourseService } = createDiscourseDeps(config as any, logger as any, metrics);
+
+    const writePolicy = (discourseService as any).resolveRetryPolicy("POST");
+    const readPolicy = (discourseService as any).resolveRetryPolicy("GET");
+
+    expect(writePolicy.maxRetries).toBe(0);
+    expect(readPolicy.maxRetries).toBe(1);
   });
 });
 

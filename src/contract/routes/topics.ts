@@ -27,8 +27,10 @@ import {
 export const topicsRoutes = {
   getTopic: oc
     .route({ method: "POST", path: "/topics/get" })
-    .input(z.object({ topicId: PositiveIntSchema }))
-    .output(z.object({ topic: TopicSchema }))
+    .input(
+      z.object({ topicId: PositiveIntSchema }).describe("Topic id to fetch from Discourse")
+    )
+    .output(z.object({ topic: TopicSchema }).describe("Normalized topic details"))
     .errors(CommonPluginErrors),
 
   getLatestTopics: oc
@@ -40,21 +42,21 @@ export const topicsRoutes = {
         order: z
           .enum(["default", "created", "activity", "views", "posts", "likes"])
           .default("default"),
-      })
+      }).describe("List latest topics optionally filtered by category and sorted")
     )
-    .output(PaginatedTopicsSchema)
+    .output(PaginatedTopicsSchema.describe("Paginated latest topics with continuation cursor"))
     .errors(CommonPluginErrors),
 
   listTopicList: oc
     .route({ method: "POST", path: "/topics/list" })
-    .input(ListTopicListInputSchema)
-    .output(PaginatedTopicsSchema)
+    .input(ListTopicListInputSchema.describe("List topics by list type (new, unread, etc.)"))
+    .output(PaginatedTopicsSchema.describe("Paginated topics for the requested list type"))
     .errors(CommonPluginErrors),
 
   getCategoryTopics: oc
     .route({ method: "POST", path: "/categories/topics" })
-    .input(CategoryTopicsInputSchema)
-    .output(PaginatedTopicsSchema)
+    .input(CategoryTopicsInputSchema.describe("List topics within a specific category"))
+    .output(PaginatedTopicsSchema.describe("Paginated topics for the requested category"))
     .errors(CommonPluginErrors),
 
   getTopTopics: oc
@@ -66,9 +68,9 @@ export const topicsRoutes = {
           .default("monthly"),
         categoryId: PositiveIntSchema.optional(),
         page: PageSchema,
-      })
+      }).describe("List top topics over a period with optional category filter")
     )
-    .output(PaginatedTopicsSchema)
+    .output(PaginatedTopicsSchema.describe("Paginated top topics with next page marker"))
     .errors(CommonPluginErrors),
 
   updateTopicStatus: oc
@@ -80,15 +82,15 @@ export const topicsRoutes = {
         enabled: z.boolean(),
         username: OptionalUsernameSchema,
         userApiKey: OptionalUserApiKeySchema,
-      })
+      }).describe("Update a topic's status (close, archive, pin, or hide)")
     )
-    .output(TopicActionResultSchema)
+    .output(TopicActionResultSchema.describe("Result of updating topic status"))
     .errors(CommonPluginErrors),
 
   updateTopicMetadata: oc
     .route({ method: "POST", path: "/topics/metadata" })
-    .input(TopicMetadataInputSchema)
-    .output(TopicActionResultSchema)
+    .input(TopicMetadataInputSchema.describe("Update topic metadata such as title or tags"))
+    .output(TopicActionResultSchema.describe("Updated topic metadata result"))
     .errors(CommonPluginErrors),
 
   bookmarkTopic: oc
@@ -100,9 +102,9 @@ export const topicsRoutes = {
         username: RequiredUsernameSchema,
         userApiKey: OptionalUserApiKeySchema,
         reminderAt: z.string().datetime().optional(),
-      })
+      }).describe("Bookmark a topic with optional reminder and post number")
     )
-    .output(BookmarkResultSchema)
+    .output(BookmarkResultSchema.describe("Bookmark result with identifiers and reminder info"))
     .errors(CommonPluginErrors),
 
   inviteToTopic: oc
@@ -120,8 +122,13 @@ export const topicsRoutes = {
           (value) => value.usernames.length > 0 || value.groupNames.length > 0,
           "Provide at least one username or groupName"
         )
+        .describe("Invite users or groups to a topic via usernames or group names")
     )
-    .output(z.object({ success: z.boolean() }))
+    .output(
+      z
+        .object({ success: z.boolean() })
+        .describe("Indicates whether invites were accepted by Discourse")
+    )
     .errors(CommonPluginErrors),
 
   setTopicNotification: oc
@@ -132,9 +139,9 @@ export const topicsRoutes = {
         level: TopicNotificationLevelSchema,
         username: z.string().min(1, "Discourse username is required"),
         userApiKey: OptionalUserApiKeySchema,
-      })
+      }).describe("Set a user's notification level for a topic")
     )
-    .output(TopicNotificationResultSchema)
+    .output(TopicNotificationResultSchema.describe("Result of updating topic notification level"))
     .errors(CommonPluginErrors),
 
   changeTopicTimestamp: oc
@@ -157,8 +164,8 @@ export const topicsRoutes = {
         categoryId: PositiveIntSchema.optional(),
         username: OptionalUsernameSchema,
         userApiKey: OptionalUserApiKeySchema,
-      })
+      }).describe("Add or update a topic timer (auto-close/open) with optional metadata")
     )
-    .output(TopicTimerResultSchema)
+    .output(TopicTimerResultSchema.describe("Details of the created or updated topic timer"))
     .errors(CommonPluginErrors),
 };

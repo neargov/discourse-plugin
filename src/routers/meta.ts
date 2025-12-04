@@ -4,15 +4,12 @@ import type { contract } from "../contract";
 import type {
   DiscoursePluginConfig,
   LogFn,
-  MakeHandler,
   PluginContext,
   RunEffect,
 } from "../index";
-import type { PluginErrorConstructors } from "../plugin-errors";
-import type { createWithErrorLogging } from "../index";
+import type { WrapRoute } from "../router-helpers";
 
 type Builder = Implementer<typeof contract, PluginContext, PluginContext>;
-type WithErrorLogging = ReturnType<typeof createWithErrorLogging>;
 
 export const buildMetaRouter = (params: {
   builder: Builder;
@@ -21,10 +18,10 @@ export const buildMetaRouter = (params: {
   run: RunEffect;
   config: DiscoursePluginConfig;
   cleanupFiber: PluginContext["cleanupFiber"];
-  withErrorLogging: WithErrorLogging;
-  enforceRateLimit: (action: string, errors: PluginErrorConstructors) => void;
-  withCache: <T>(params: { action: string; key: string; fetch: () => Promise<T> }) => Promise<T>;
+  wrapRoute: WrapRoute;
   cacheStats: () => { size: number; hits: number; misses: number; ttlMs: number };
+  invalidateCache?: (keys: string[]) => void;
+  invalidateCacheByPrefix?: (prefixes: string[]) => void;
 }) => {
   const {
     builder,
@@ -33,14 +30,11 @@ export const buildMetaRouter = (params: {
     run,
     config,
     cleanupFiber,
-    withErrorLogging,
-    enforceRateLimit,
-    withCache,
+    wrapRoute,
     cacheStats,
+    invalidateCache = () => {},
+    invalidateCacheByPrefix = () => {},
   } = params;
-
-  const cached = <T>(action: string, key: string, fetch: () => Promise<T>) =>
-    withCache({ action, key, fetch });
 
   const resolveStatus = (checks: { discourse: boolean; cache: boolean; cleanup: boolean }) => {
     const values = Object.values(checks);
@@ -50,112 +44,118 @@ export const buildMetaRouter = (params: {
     return "degraded" as const;
   };
 
+  const invalidateTagCaches = () => {
+    invalidateCache(["meta:get-tags", "meta:get-tag-groups"]);
+    invalidateCacheByPrefix(["meta:get-tag:", "meta:get-tag-group:"]);
+  };
+
   return {
-    ping: builder.ping.handler(async ({ errors }) => {
-      enforceRateLimit("ping", errors);
-      const timeoutMs = Math.min(config.variables.requestTimeoutMs, 2000);
-
-      const discourse = await run(
-        discourseService.checkHealth({
-          timeoutMs,
-        })
-      );
-
-      const cacheStatus = cacheStats();
-      const cache = cacheStatus.ttlMs > 0;
-      const cleanup = Boolean(cleanupFiber);
-
-      const checks = { discourse, cache, cleanup };
-      const status = resolveStatus(checks);
-
-      log(status === "healthy" ? "debug" : status === "degraded" ? "warn" : "error", "Ping Discourse", {
+    ping: builder.ping.handler(
+      wrapRoute({
         action: "ping",
-        checks,
-        timeoutMs,
-        cache: cacheStatus,
-        status,
-      });
+        handler: async () => {
+          const timeoutMs = Math.min(config.variables.requestTimeoutMs, 2000);
+          const cacheConfigured =
+            (config.variables.cacheMaxSize ?? 0) > 0 && (config.variables.cacheTtlMs ?? 0) > 0;
+          const discourse = await run(
+            discourseService.checkHealth({
+              timeoutMs,
+            })
+          );
 
-      return {
-        status,
-        checks,
-        timestamp: new Date().toISOString(),
-      };
-    }),
+          const cacheStatus = cacheStats();
+          const cache = cacheConfigured ? cacheStatus.ttlMs > 0 : true;
+          const cleanup = Boolean(cleanupFiber);
 
-    getTags: builder.getTags.handler(async ({ errors }) =>
-      (enforceRateLimit("get-tags", errors),
-      withErrorLogging(
-        "get-tags",
-        async () =>
-          cached("get-tags", "meta:get-tags", async () => {
-            const tags = await run(discourseService.getTags());
-            log("debug", "Fetched tags", {
-              action: "get-tags",
-              count: tags.length,
-            });
-            return { tags };
-          }),
-        errors
-      ))
+          const checks = { discourse, cache, cleanup };
+          const status = resolveStatus(checks);
+
+          log(
+            status === "healthy" ? "debug" : status === "degraded" ? "warn" : "error",
+            "Ping Discourse",
+            {
+              action: "ping",
+              checks,
+              timeoutMs,
+              cache: cacheStatus,
+              cacheDisabled: !cacheConfigured,
+              status,
+            }
+          );
+
+          return {
+            status,
+            checks,
+            timestamp: new Date().toISOString(),
+          };
+        },
+      })
     ),
 
-    getTag: builder.getTag.handler(async ({ input, errors }) =>
-      (enforceRateLimit("get-tag", errors),
-      withErrorLogging(
-        "get-tag",
-        async () =>
-          cached("get-tag", `meta:get-tag:${input.name}`, async () => {
-            const tag = await run(discourseService.getTag(input.name));
-            log("debug", "Fetched tag", {
-              action: "get-tag",
-              name: input.name,
-            });
-            return { tag };
-          }),
-        errors
-      ))
+    getTags: builder.getTags.handler(
+      wrapRoute({
+        action: "get-tags",
+        cacheKey: "meta:get-tags",
+        handler: async () => {
+          const tags = await run(discourseService.getTags());
+          log("debug", "Fetched tags", {
+            action: "get-tags",
+            count: tags.length,
+          });
+          return { tags };
+        },
+      })
     ),
 
-    getTagGroups: builder.getTagGroups.handler(async ({ errors }) =>
-      (enforceRateLimit("get-tag-groups", errors),
-      withErrorLogging(
-        "get-tag-groups",
-        async () =>
-          cached("get-tag-groups", "meta:get-tag-groups", async () => {
-            const tagGroups = await run(discourseService.getTagGroups());
-            log("debug", "Fetched tag groups", {
-              action: "get-tag-groups",
-              count: tagGroups.length,
-            });
-            return { tagGroups };
-          }),
-        errors
-      ))
+    getTag: builder.getTag.handler(
+      wrapRoute({
+        action: "get-tag",
+        cacheKey: (input) => `meta:get-tag:${input.name}`,
+        handler: async ({ input }) => {
+          const tag = await run(discourseService.getTag(input.name));
+          log("debug", "Fetched tag", {
+            action: "get-tag",
+            name: input.name,
+          });
+          return { tag };
+        },
+      })
     ),
 
-    getTagGroup: builder.getTagGroup.handler(async ({ input, errors }) =>
-      (enforceRateLimit("get-tag-group", errors),
-      withErrorLogging(
-        "get-tag-group",
-        async () =>
-          cached("get-tag-group", `meta:get-tag-group:${input.tagGroupId}`, async () => {
-            const tagGroup = await run(discourseService.getTagGroup(input.tagGroupId));
-            log("debug", "Fetched tag group", {
-              action: "get-tag-group",
-              tagGroupId: input.tagGroupId,
-            });
-            return { tagGroup };
-          }),
-        errors
-      ))
+    getTagGroups: builder.getTagGroups.handler(
+      wrapRoute({
+        action: "get-tag-groups",
+        cacheKey: "meta:get-tag-groups",
+        handler: async () => {
+          const tagGroups = await run(discourseService.getTagGroups());
+          log("debug", "Fetched tag groups", {
+            action: "get-tag-groups",
+            count: tagGroups.length,
+          });
+          return { tagGroups };
+        },
+      })
     ),
 
-    createTagGroup: builder.createTagGroup.handler(async ({ input, errors }) =>
-      (enforceRateLimit("create-tag-group", errors),
-      withErrorLogging(
-        "create-tag-group",
-        async () => {
+    getTagGroup: builder.getTagGroup.handler(
+      wrapRoute({
+        action: "get-tag-group",
+        cacheKey: (input) => `meta:get-tag-group:${input.tagGroupId}`,
+        handler: async ({ input }) => {
+          const tagGroup = await run(discourseService.getTagGroup(input.tagGroupId));
+          log("debug", "Fetched tag group", {
+            action: "get-tag-group",
+            tagGroupId: input.tagGroupId,
+          });
+          return { tagGroup };
+        },
+      })
+    ),
+
+    createTagGroup: builder.createTagGroup.handler(
+      wrapRoute({
+        action: "create-tag-group",
+        handler: async ({ input }) => {
           const tagGroup = await run(
             discourseService.createTagGroup({
               name: input.name,
@@ -169,17 +169,16 @@ export const buildMetaRouter = (params: {
             action: "create-tag-group",
             name: input.name,
           });
+          invalidateTagCaches();
           return { tagGroup };
         },
-        errors
-      ))
+      })
     ),
 
-    updateTagGroup: builder.updateTagGroup.handler(async ({ input, errors }) =>
-      (enforceRateLimit("update-tag-group", errors),
-      withErrorLogging(
-        "update-tag-group",
-        async () => {
+    updateTagGroup: builder.updateTagGroup.handler(
+      wrapRoute({
+        action: "update-tag-group",
+        handler: async ({ input }) => {
           const tagGroup = await run(
             discourseService.updateTagGroup({
               tagGroupId: input.tagGroupId,
@@ -194,75 +193,67 @@ export const buildMetaRouter = (params: {
             action: "update-tag-group",
             tagGroupId: input.tagGroupId,
           });
+          invalidateTagCaches();
           return { tagGroup };
         },
-        errors
-      ))
+      })
     ),
 
-    getCategories: builder.getCategories.handler(async ({ errors }) =>
-      (enforceRateLimit("get-categories", errors),
-      withErrorLogging(
-        "get-categories",
-        async () =>
-          cached("get-categories", "meta:get-categories", async () => {
-            const categories = await run(discourseService.getCategories());
-            log("debug", "Fetched categories", { action: "get-categories" });
-            return { categories };
-          }),
-        errors
-      ))
+    getCategories: builder.getCategories.handler(
+      wrapRoute({
+        action: "get-categories",
+        cacheKey: "meta:get-categories",
+        handler: async () => {
+          const categories = await run(discourseService.getCategories());
+          log("debug", "Fetched categories", { action: "get-categories" });
+          return { categories };
+        },
+      })
     ),
 
-    getCategory: builder.getCategory.handler(async ({ input, errors }) =>
-      (enforceRateLimit("get-category", errors),
-      withErrorLogging(
-        "get-category",
-        async () =>
-          cached("get-category", `meta:get-category:${JSON.stringify(input)}`, async () => {
-            const result = await run(discourseService.getCategory(input.idOrSlug));
-            log("debug", "Fetched category", {
-              action: "get-category",
-              idOrSlug: input.idOrSlug,
-            });
-            return result;
-          }),
-        errors
-      ))
+    getCategory: builder.getCategory.handler(
+      wrapRoute({
+        action: "get-category",
+        cacheKey: (input) => `meta:get-category:${JSON.stringify(input)}`,
+        handler: async ({ input }) => {
+          const result = await run(discourseService.getCategory(input.idOrSlug));
+          log("debug", "Fetched category", {
+            action: "get-category",
+            idOrSlug: input.idOrSlug,
+          });
+          return result;
+        },
+      })
     ),
 
-    getSiteInfo: builder.getSiteInfo.handler(async ({ errors }) =>
-      (enforceRateLimit("get-site-info", errors),
-      withErrorLogging(
-        "get-site-info",
-        async () =>
-          cached("get-site-info", "meta:get-site-info", async () => {
-            const site = await run(discourseService.getSiteInfo());
-            log("debug", "Fetched site info", {
-              action: "get-site-info",
-              categories: site.categories.length,
-            });
-            return site;
-          }),
-        errors
-      ))
+    getSiteInfo: builder.getSiteInfo.handler(
+      wrapRoute({
+        action: "get-site-info",
+        cacheKey: "meta:get-site-info",
+        handler: async () => {
+          const site = await run(discourseService.getSiteInfo());
+          log("debug", "Fetched site info", {
+            action: "get-site-info",
+            categories: site.categories.length,
+          });
+          return site;
+        },
+      })
     ),
 
-    getSiteBasicInfo: builder.getSiteBasicInfo.handler(async ({ errors }) =>
-      (enforceRateLimit("get-site-basic-info", errors),
-      withErrorLogging(
-        "get-site-basic-info",
-        async () =>
-          cached("get-site-basic-info", "meta:get-site-basic-info", async () => {
-            const site = await run(discourseService.getSiteBasicInfo());
-            log("debug", "Fetched site basic info", {
-              action: "get-site-basic-info",
-              title: site.title,
-            });
-            return site;
-          }),
-        errors
-      ))
+    getSiteBasicInfo: builder.getSiteBasicInfo.handler(
+      wrapRoute({
+        action: "get-site-basic-info",
+        cacheKey: "meta:get-site-basic-info",
+        handler: async () => {
+          const site = await run(discourseService.getSiteBasicInfo());
+          log("debug", "Fetched site basic info", {
+            action: "get-site-basic-info",
+            title: site.title,
+          });
+          return site;
+        },
+      })
     ),
   };
 };

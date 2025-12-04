@@ -1,13 +1,10 @@
 import { Effect } from "every-plugin/effect";
 import type { RetryPolicy } from "./constants";
-import {
-  DEFAULT_BODY_SNIPPET_LENGTH,
-  DEFAULT_RETRY_POLICY,
-  TRANSIENT_STATUSES,
-} from "./constants";
+import { DEFAULT_BODY_SNIPPET_LENGTH, DEFAULT_RETRY_POLICY, TRANSIENT_STATUSES } from "./constants";
 import {
   Transport,
   buildRetryPolicies,
+  normalizeBaseUrl,
   normalizeRetryPolicy,
   resolveRetryPolicy as resolveRetryPolicyFn,
   type FetchOptions,
@@ -154,6 +151,28 @@ export type OperationRetryPolicy = {
   writes?: Partial<RetryPolicy>;
 };
 
+export const resolveEffectiveRetryPolicies = (params: {
+  base?: Partial<RetryPolicy>;
+  operation?: OperationRetryPolicy;
+  defaultPolicy?: RetryPolicy;
+  defaultWritesMaxRetries?: number;
+}): { retryPolicy: RetryPolicy; retryPolicies: { default: RetryPolicy; reads: RetryPolicy; writes: RetryPolicy } } => {
+  const defaultPolicy = params.defaultPolicy ?? DEFAULT_RETRY_POLICY;
+  const retryPolicy = normalizeRetryPolicy(params.base, defaultPolicy);
+  const operationOverrides = params.operation ?? {};
+  const writesOverride =
+    operationOverrides.writes ??
+    (typeof params.defaultWritesMaxRetries === "number"
+      ? { maxRetries: params.defaultWritesMaxRetries }
+      : undefined);
+  const retryPolicies = buildRetryPolicies(retryPolicy, {
+    default: operationOverrides.default,
+    reads: operationOverrides.reads,
+    writes: writesOverride,
+  });
+  return { retryPolicy, retryPolicies };
+};
+
 export type ResourceClient = {
   buildUrl: (path: string) => string;
   getNormalizedBaseUrl: () => string;
@@ -203,15 +222,7 @@ export class DiscourseClient implements ResourceClient {
       bodySnippetLength?: number;
     } = {}
   ) {
-    try {
-      const parsed = new URL(baseUrl);
-      const trimmedPath = parsed.pathname.replace(/\/+$/, "");
-      const normalizedPath = trimmedPath.length ? trimmedPath : "";
-      this.baseUrl = `${parsed.origin}${normalizedPath}/`;
-    } catch {
-      throw new Error(`Invalid Discourse base URL: ${baseUrl}`);
-    }
-
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.logger = logger;
     this.defaultTimeoutMs =
       typeof options.defaultTimeoutMs === "number" &&
@@ -221,8 +232,14 @@ export class DiscourseClient implements ResourceClient {
         : 30000;
     this.userAgent = options.userAgent?.trim() || undefined;
     this.userApiClientId = options.userApiClientId?.trim() || undefined;
-    this.retryPolicy = normalizeRetryPolicy(options.retryPolicy, DEFAULT_RETRY_POLICY);
-    this.retryPolicies = buildRetryPolicies(this.retryPolicy, options.operationRetryPolicy);
+    const { retryPolicy, retryPolicies } = resolveEffectiveRetryPolicies({
+      base: options.retryPolicy,
+      operation: options.operationRetryPolicy,
+      defaultPolicy: DEFAULT_RETRY_POLICY,
+      defaultWritesMaxRetries: 0,
+    });
+    this.retryPolicy = retryPolicy;
+    this.retryPolicies = retryPolicies;
     this.baseRequestLogger = options.requestLogger;
     this.requestLogger = options.requestLogger;
     this.fetchImpl = options.fetchImpl;

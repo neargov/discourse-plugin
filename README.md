@@ -161,6 +161,8 @@ const { client } = await runtime.usePlugin("discourse-plugin", {
 - `nonceTtlMs` default `600000`: Lifetime for issued nonces (ms).
 - `nonceCleanupIntervalMs` default `300000`: Background cleanup cadence (ms).
 - `logBodySnippetLength` default `500`: Maximum characters from response bodies to include in logs/errors.
+- `rateLimitBucketTtlMs` default `300000`: How long idle rate-limit buckets live before eviction (ms).
+- `rateLimitMaxBuckets` default `1000`: Maximum number of concurrent rate-limit buckets to retain.
 - `operationRetryPolicy` optional: Override retry settings per operation type (`default`, `reads`, `writes`).
 - `userAgent` optional: Custom User-Agent header.
 - `discourseApiKey` **secret**: Discourse system API key (template-injected as `{{DISCOURSE_API_KEY}}`).

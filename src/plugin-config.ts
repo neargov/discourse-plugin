@@ -1,5 +1,5 @@
 import { z } from "every-plugin/zod";
-import type { OperationRetryPolicy } from "./constants";
+import type { OperationRetryPolicy } from "./client";
 import type { Logger, RequestLogger } from "./logging";
 import type { PluginErrorConstructors } from "./plugin-errors";
 
@@ -94,6 +94,18 @@ export const VariablesSchema = z.object({
     .positive()
     .default(10)
     .describe("Allowed Discourse API requests per second for this plugin instance"),
+  rateLimitBucketTtlMs: z
+    .number()
+    .int()
+    .positive()
+    .default(5 * 60 * 1000)
+    .describe("TTL in milliseconds before idle rate-limit buckets are evicted"),
+  rateLimitMaxBuckets: z
+    .number()
+    .int()
+    .positive()
+    .default(1000)
+    .describe("Maximum number of rate-limit buckets to retain at once"),
   rateLimitStrategy: z
     .enum(["global", "perAction", "perClient", "perActionClient"])
     .default("global")

@@ -52,6 +52,105 @@ export const RawAbortUploadSchema = z.object({
   aborted: z.boolean().optional(),
 });
 
+type PresignParseResult = {
+  key: string;
+  uploadUrl: string;
+  headers: Record<string, string>;
+  uniqueIdentifier: string;
+};
+
+const parsePresignResponse = (data: unknown): PresignParseResult => {
+  let parsed: z.infer<typeof RawPresignedUploadSchema>;
+  try {
+    parsed = parseWithSchemaOrThrow(
+      RawPresignedUploadSchema,
+      data,
+      "Presigned upload",
+      "Malformed presign response"
+    );
+  } catch (error) {
+    const fallback = data as any;
+    if (
+      fallback &&
+      typeof fallback.key === "string" &&
+      (typeof fallback.upload_url === "string" || typeof fallback.url === "string") &&
+      typeof fallback.unique_identifier === "string"
+    ) {
+      parsed = {
+        key: fallback.key,
+        url: typeof fallback.url === "string" ? fallback.url : undefined,
+        upload_url: typeof fallback.upload_url === "string" ? fallback.upload_url : undefined,
+        /* c8 ignore start */
+        headers: fallback.headers && typeof fallback.headers === "object" ? fallback.headers : {},
+        /* c8 ignore stop */
+        unique_identifier: fallback.unique_identifier,
+      };
+    } else {
+      throw error;
+    }
+  }
+
+  const uploadUrl = parsed.upload_url ?? parsed.url;
+  if (!uploadUrl) {
+    throw new Error("Malformed presign response: upload_url missing");
+  }
+
+  return {
+    key: parsed.key,
+    uploadUrl,
+    headers: normalizeHeaderValues(parsed.headers),
+    uniqueIdentifier: parsed.unique_identifier,
+  };
+};
+
+type MultipartPresignParseResult = {
+  uploadId: string;
+  key: string;
+  uniqueIdentifier: string;
+  parts: Array<{ partNumber: number; url: string; headers: Record<string, string> }>;
+};
+
+const parseMultipartPresignResponse = (data: unknown): MultipartPresignParseResult => {
+  let parsed: z.infer<typeof RawMultipartPresignSchema>;
+  try {
+    parsed = parseWithSchemaOrThrow(
+      RawMultipartPresignSchema,
+      data,
+      "Multipart presign",
+      "Malformed multipart presign response"
+    );
+  } catch (error) {
+    const fallback = data as any;
+    if (
+      fallback &&
+      typeof fallback.upload_id === "string" &&
+      typeof fallback.key === "string" &&
+      typeof fallback.unique_identifier === "string" &&
+      Array.isArray(fallback.presigned_urls)
+    ) {
+      parsed = {
+        upload_id: fallback.upload_id,
+        key: fallback.key,
+        unique_identifier: fallback.unique_identifier,
+        presigned_urls: fallback.presigned_urls,
+      };
+    } else {
+      throw error;
+    }
+  }
+
+  return {
+    uploadId: parsed.upload_id,
+    key: parsed.key,
+    uniqueIdentifier: parsed.unique_identifier,
+    parts: parsed.presigned_urls.map((part) => ({
+      partNumber: part.part_number,
+      url: part.url,
+      headers: normalizeHeaderValues(part.headers ?? {}),
+    })),
+  };
+};
+
 export const mapUpload = (upload: any): Upload => {
   const parsed = parseWithSchemaOrThrow(
     RawUploadSchema,
@@ -122,51 +221,14 @@ export const createUploadsResource = (client: ResourceClient) => ({
         throw new Error("Empty presign response");
       }
 
-      let parsed: z.infer<typeof RawPresignedUploadSchema>;
-      try {
-        parsed = parseWithSchemaOrThrow(
-          RawPresignedUploadSchema,
-          data,
-          "Presigned upload",
-          "Malformed presign response"
-        );
-      } catch (error) {
-        const fallback = data as any;
-        if (
-          fallback &&
-          typeof fallback.key === "string" &&
-          (typeof fallback.upload_url === "string" || typeof fallback.url === "string") &&
-          typeof fallback.unique_identifier === "string"
-        ) {
-          parsed = {
-            key: fallback.key,
-            url: typeof fallback.url === "string" ? fallback.url : undefined,
-            upload_url:
-              typeof fallback.upload_url === "string" ? fallback.upload_url : undefined,
-            /* c8 ignore start */
-            headers:
-              fallback.headers && typeof fallback.headers === "object"
-                ? fallback.headers
-                : {},
-            /* c8 ignore stop */
-            unique_identifier: fallback.unique_identifier,
-          };
-        } else {
-          throw error;
-        }
-      }
-
-      const uploadUrl = parsed.upload_url ?? parsed.url;
-      if (!uploadUrl) {
-        throw new Error("Malformed presign response: upload_url missing");
-      }
+      const parsed = parsePresignResponse(data);
 
       return {
         method: "PUT" as const,
-        uploadUrl,
-        headers: normalizeHeaderValues(parsed.headers),
+        uploadUrl: parsed.uploadUrl,
+        headers: parsed.headers,
         key: parsed.key,
-        uniqueIdentifier: parsed.unique_identifier,
+        uniqueIdentifier: parsed.uniqueIdentifier,
       };
     }),
 
@@ -198,43 +260,13 @@ export const createUploadsResource = (client: ResourceClient) => ({
         throw new Error("Empty multipart presign response");
       }
 
-      let parsed: z.infer<typeof RawMultipartPresignSchema>;
-      try {
-        parsed = parseWithSchemaOrThrow(
-          RawMultipartPresignSchema,
-          data,
-          "Multipart presign",
-          "Malformed multipart presign response"
-        );
-      } catch (error) {
-        const fallback = data as any;
-        if (
-          fallback &&
-          typeof fallback.upload_id === "string" &&
-          typeof fallback.key === "string" &&
-          typeof fallback.unique_identifier === "string" &&
-          Array.isArray(fallback.presigned_urls)
-        ) {
-          parsed = {
-            upload_id: fallback.upload_id,
-            key: fallback.key,
-            unique_identifier: fallback.unique_identifier,
-            presigned_urls: fallback.presigned_urls,
-          };
-        } else {
-          throw error;
-        }
-      }
+      const parsed = parseMultipartPresignResponse(data);
 
       return {
-        uploadId: parsed.upload_id,
+        uploadId: parsed.uploadId,
         key: parsed.key,
-        uniqueIdentifier: parsed.unique_identifier,
-        parts: parsed.presigned_urls.map((part) => ({
-          partNumber: part.part_number,
-          url: part.url,
-          headers: normalizeHeaderValues(part.headers ?? {}),
-        })),
+        uniqueIdentifier: parsed.uniqueIdentifier,
+        parts: parsed.parts,
       };
     }),
 

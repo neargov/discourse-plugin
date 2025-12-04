@@ -110,6 +110,7 @@ describe("createRouter handler parity", () => {
     const router = createRouter(makeContext(), builder);
     const registered = Object.keys(router).sort();
 
-    expect(registered).toEqual([...EXPECTED_HANDLERS].sort());
+    expect(registered).toEqual(expect.arrayContaining(EXPECTED_HANDLERS));
+    expect(registered).toHaveLength(EXPECTED_HANDLERS.length);
   });
 });

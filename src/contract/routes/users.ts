@@ -20,8 +20,10 @@ import {
 export const usersRoutes = {
   getUser: oc
     .route({ method: "POST", path: "/users/get" })
-    .input(z.object({ username: RequiredUsernameSchema }))
-    .output(z.object({ user: UserProfileSchema }))
+    .input(
+      z.object({ username: RequiredUsernameSchema }).describe("Discourse username to retrieve")
+    )
+    .output(z.object({ user: UserProfileSchema }).describe("Full Discourse user profile"))
     .errors(CommonPluginErrors),
 
   createUser: oc
@@ -39,14 +41,14 @@ export const usersRoutes = {
         staged: z.boolean().optional(),
         emailVerified: z.boolean().optional(),
         locale: z.string().optional(),
-      })
+      }).describe("Create a new Discourse user with optional attributes")
     )
     .output(
       z.object({
         success: z.boolean(),
         userId: z.number().int().optional(),
         active: z.boolean().optional(),
-      })
+      }).describe("Result of creating a user, including id and activation status")
     )
     .errors(CommonPluginErrors),
 
@@ -65,9 +67,9 @@ export const usersRoutes = {
         staged: z.boolean().optional(),
         bioRaw: z.string().optional(),
         locale: z.string().optional(),
-      })
+      }).describe("Update existing user fields such as email, title, suspension, or bio")
     )
-    .output(SuccessSchema)
+    .output(SuccessSchema.describe("Indicates whether the user update succeeded"))
     .errors(CommonPluginErrors),
 
   deleteUser: oc
@@ -80,15 +82,19 @@ export const usersRoutes = {
         blockIp: z.boolean().default(false),
         deletePosts: z.boolean().default(false),
         context: z.string().optional(),
-      })
+      }).describe("Delete a user with optional blocking flags and post deletion")
     )
-    .output(SuccessSchema)
+    .output(SuccessSchema.describe("Indicates whether the user was deleted"))
     .errors(CommonPluginErrors),
 
   listUsers: oc
     .route({ method: "POST", path: "/users/list" })
-    .input(z.object({ page: PageSchema }))
-    .output(z.object({ users: z.array(DiscourseUserSchema) }))
+    .input(z.object({ page: PageSchema }).describe("Paginated request for users list"))
+    .output(
+      z
+        .object({ users: z.array(DiscourseUserSchema) })
+        .describe("Page of users with basic profile details")
+    )
     .errors(CommonPluginErrors),
 
   listAdminUsers: oc
@@ -100,9 +106,13 @@ export const usersRoutes = {
           .default("active"),
         page: PageSchema,
         showEmails: z.boolean().default(false),
-      })
+      }).describe("List admin-visible users filtered by status with optional email visibility")
     )
-    .output(z.object({ users: z.array(AdminUserSchema) }))
+    .output(
+      z
+        .object({ users: z.array(AdminUserSchema) })
+        .describe("Page of admin user records including staff and status details")
+    )
     .errors(CommonPluginErrors),
 
   getUserByExternal: oc
@@ -111,9 +121,9 @@ export const usersRoutes = {
       z.object({
         externalId: NonEmptyString.min(1, "External ID is required"),
         provider: NonEmptyString.min(1, "Provider is required"),
-      })
+      }).describe("Find a user by external id and provider mapping")
     )
-    .output(z.object({ user: UserProfileSchema }))
+    .output(z.object({ user: UserProfileSchema }).describe("User profile matched by external id"))
     .errors(CommonPluginErrors),
 
   getDirectory: oc
@@ -131,29 +141,35 @@ export const usersRoutes = {
             "posts_read",
             "days_visited",
             "topic_count",
-            "post_count",
-          ])
+              "post_count",
+            ])
           .default("likes_received"),
         page: PageSchema,
-      })
+      }).describe("Retrieve user directory with period/order filters and pagination")
     )
     .output(
       z.object({
         items: z.array(DirectoryItemSchema),
         totalRows: NonNegativeIntSchema,
-      })
+      }).describe("Directory items with aggregate totals for pagination")
     )
     .errors(CommonPluginErrors),
 
   getUserStatus: oc
     .route({ method: "POST", path: "/users/status/get" })
-    .input(z.object({ username: RequiredUsernameSchema }))
-    .output(z.object({ status: UserStatusSchema.nullable() }))
+    .input(
+      z.object({ username: RequiredUsernameSchema }).describe("Username whose status to fetch")
+    )
+    .output(
+      z.object({ status: UserStatusSchema.nullable() }).describe("User status payload if present")
+    )
     .errors(CommonPluginErrors),
 
   updateUserStatus: oc
     .route({ method: "POST", path: "/users/status/update" })
-    .input(UserStatusInputSchema)
-    .output(z.object({ status: UserStatusSchema }))
+    .input(UserStatusInputSchema.describe("Update a user's status text and emoji"))
+    .output(
+      z.object({ status: UserStatusSchema }).describe("Updated user status returned by Discourse")
+    )
     .errors(CommonPluginErrors),
 };

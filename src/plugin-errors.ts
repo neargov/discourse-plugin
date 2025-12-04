@@ -44,12 +44,16 @@ export const mapDiscourseApiError = (
     },
   });
 
-  const handlers: Record<number | "badRequest" | "transient" | "serverError", typeof errors[keyof typeof errors]> = {
+  const rateLimitHandler = errors.TOO_MANY_REQUESTS ?? errors.RATE_LIMITED;
+  const handlers: Record<
+    number | "badRequest" | "transient" | "serverError",
+    typeof errors[keyof typeof errors]
+  > = {
     401: errors.UNAUTHORIZED,
     403: errors.FORBIDDEN,
     404: errors.NOT_FOUND,
     badRequest: errors.BAD_REQUEST,
-    transient: errors.TOO_MANY_REQUESTS,
+    transient: rateLimitHandler,
     serverError: errors.SERVICE_UNAVAILABLE,
   };
 

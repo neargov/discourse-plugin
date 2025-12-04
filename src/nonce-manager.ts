@@ -40,6 +40,7 @@ export class NonceManager {
     string,
     { clientId: string; privateKey: string; timestamp: number }
   >();
+  private clientCounts = new Map<string, number>();
   private readonly ttl: number;
   private readonly maxPerClient?: number;
   private readonly maxTotal?: number;
@@ -96,7 +97,7 @@ export class NonceManager {
   }
 
   create(clientId: string, privateKey: string): string {
-    this.cleanup();
+    this.pruneExpired();
     const normalizedClientId = this.normalizeClientId(clientId);
     const normalizedPrivateKey = this.normalizePrivateKey(privateKey);
     this.ensureCapacity(normalizedClientId);
@@ -106,28 +107,21 @@ export class NonceManager {
       privateKey: normalizedPrivateKey,
       timestamp: Date.now(),
     });
+    this.incrementClientCount(normalizedClientId);
     return nonce;
   }
 
   get(
     nonce: string
   ): { clientId: string; privateKey: string; timestamp: number } | null {
-    const data = this.nonces.get(nonce);
-    if (!data) return null;
-    if (this.isExpired(data.timestamp)) {
-      this.nonces.delete(nonce);
-      return null;
-    }
-    return data;
+    this.pruneExpired();
+    return this.nonces.get(nonce) ?? null;
   }
 
   verify(nonce: string, clientId: string): boolean {
+    this.pruneExpired();
     const data = this.nonces.get(nonce);
     if (!data) return false;
-    if (this.isExpired(data.timestamp)) {
-      this.nonces.delete(nonce);
-      return false;
-    }
     const normalizedClientId = this.normalizeClientIdOrNull(clientId);
     if (!normalizedClientId) {
       return false;
@@ -146,12 +140,15 @@ export class NonceManager {
   }
 
   getNextExpiration(clientId?: string): number | null {
-    this.cleanup();
+    this.pruneExpired();
     const normalizedClientId = this.normalizeClientIdOrNull(clientId);
     let next: number | null = null;
     for (const [nonce, data] of this.nonces.entries()) {
-      if (this.isExpired(data.timestamp)) {
+      const now = Date.now();
+      const expired = now - data.timestamp > this.ttl;
+      if (expired) {
         this.nonces.delete(nonce);
+        this.decrementClientCount(data.clientId);
         continue;
       }
       if (normalizedClientId && data.clientId !== normalizedClientId) {
@@ -176,15 +173,15 @@ export class NonceManager {
   }
 
   consume(nonce: string): void {
-    this.nonces.delete(nonce);
+    const data = this.nonces.get(nonce);
+    if (data) {
+      this.nonces.delete(nonce);
+      this.decrementClientCount(data.clientId);
+    }
   }
 
   cleanup(): void {
-    for (const [nonce, data] of this.nonces.entries()) {
-      if (this.isExpired(data.timestamp)) {
-        this.nonces.delete(nonce);
-      }
-    }
+    this.pruneExpired();
   }
 
   private normalizeTtl(ttlMs: number): number {
@@ -204,13 +201,17 @@ export class NonceManager {
   }
 
   private countByClient(clientId: string): number {
-    let count = 0;
+    const count = this.getClientCount(clientId);
+    if (count > 0) {
+      return count;
+    }
+    let fallback = 0;
     for (const entry of this.nonces.values()) {
       if (entry.clientId === clientId) {
-        count += 1;
+        fallback += 1;
       }
     }
-    return count;
+    return fallback;
   }
 
   private evictOldest(predicate: (entry: { clientId: string; timestamp: number }) => boolean): boolean {
@@ -228,7 +229,11 @@ export class NonceManager {
     }
 
     if (oldestNonce) {
-      this.nonces.delete(oldestNonce);
+      const data = this.nonces.get(oldestNonce);
+      if (data) {
+        this.nonces.delete(oldestNonce);
+        this.decrementClientCount(data.clientId);
+      }
       return true;
     }
 
@@ -267,7 +272,7 @@ export class NonceManager {
 
   private ensureCapacity(clientId: string): void {
     if (this.maxPerClient !== undefined) {
-      if (this.countByClient(clientId) >= this.maxPerClient) {
+      if (this.getClientCount(clientId) >= this.maxPerClient) {
         const evicted = this.evictForClient(clientId, this.maxPerClient - 1);
         if (this.perClientStrategy === "evictOldest" && evicted) {
           // allow replacement after eviction
@@ -292,6 +297,33 @@ export class NonceManager {
             limit: this.maxTotal,
           });
         }
+      }
+    }
+  }
+
+  private incrementClientCount(clientId: string) {
+    this.clientCounts.set(clientId, (this.clientCounts.get(clientId) ?? 0) + 1);
+  }
+
+  private decrementClientCount(clientId: string) {
+    const current = this.clientCounts.get(clientId) ?? 0;
+    if (current <= 1) {
+      this.clientCounts.delete(clientId);
+    } else {
+      this.clientCounts.set(clientId, current - 1);
+    }
+  }
+
+  private getClientCount(clientId: string): number {
+    return this.clientCounts.get(clientId) ?? 0;
+  }
+
+  private pruneExpired() {
+    if (this.nonces.size === 0) return;
+    for (const [nonce, data] of this.nonces.entries()) {
+      if (this.isExpired(data.timestamp)) {
+        this.nonces.delete(nonce);
+        this.decrementClientCount(data.clientId);
       }
     }
   }
