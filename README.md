@@ -61,6 +61,97 @@ await client.createPost({
 await runtime.shutdown();
 ```
 
+## Local Runtime (no Module Federation) for contributors
+
+Use the local runtime to iterate quickly without serving `remoteEntry.js`:
+
+```ts
+import { createLocalPluginRuntime } from "every-plugin/testing";
+import DiscoursePlugin from "./src/index"; // local source
+
+const plugins = {
+  "discourse-plugin": DiscoursePlugin,
+} as const; // important for type inference
+
+const runtime = createLocalPluginRuntime(
+  {
+    registry: {
+      "discourse-plugin": {
+        remoteUrl: "http://localhost:3014/remoteEntry.js", // unused locally
+        version: "0.0.0-local",
+      },
+    },
+    secrets: { DISCOURSE_API_KEY: process.env.DISCOURSE_API_KEY! },
+  },
+  plugins
+);
+
+const { client } = await runtime.usePlugin("discourse-plugin", {
+  variables: {
+    discourseBaseUrl: "https://discuss.example.com",
+    requestTimeoutMs: 5_000,
+    nonceTtlMs: 60_000,
+    nonceCleanupIntervalMs: 30_000,
+  },
+  secrets: { discourseApiKey: "{{DISCOURSE_API_KEY}}" },
+});
+
+// call procedures...
+
+await runtime.shutdown();
+```
+
+## Type Bindings & Remote Runtime
+
+Type bindings are optional (the contract enforces runtime safety) but improve IDE autocomplete. Keep the plugin as a **dev dependency only**; the runtime loads the remote build.
+
+1) Install types only:
+```bash
+bun add -D discourse-plugin
+```
+
+2) Add module augmentation so `usePlugin` is typed:
+```ts
+// types.d.ts
+import type DiscoursePlugin from "discourse-plugin";
+
+declare module "every-plugin" {
+  interface RegisteredPlugins {
+    "discourse-plugin": typeof DiscoursePlugin;
+  }
+}
+```
+
+3) Use the remote module at runtime (no local import of implementation):
+```ts
+import { createPluginRuntime } from "every-plugin/runtime";
+
+const runtime = createPluginRuntime({
+  registry: {
+    "discourse-plugin": {
+      remoteUrl: "https://cdn.example.com/discourse/remoteEntry.js",
+      version: "1.0.0",
+      description: "Discourse plugin",
+    },
+  },
+  secrets: { DISCOURSE_API_KEY: process.env.DISCOURSE_API_KEY! },
+});
+
+const { client } = await runtime.usePlugin("discourse-plugin", {
+  variables: {
+    discourseBaseUrl: "https://discuss.example.com",
+    requestTimeoutMs: 30_000,
+    nonceTtlMs: 10 * 60 * 1000,
+    nonceCleanupIntervalMs: 5 * 60 * 1000,
+  },
+  secrets: { discourseApiKey: "{{DISCOURSE_API_KEY}}" },
+});
+```
+
+> Tip: If the deployed remote version differs from your local types, the oRPC contract remains the source of truth and will validate inputs/outputs at runtime.
+
+**Compatibility note:** If a newer plugin build is deployed to your CDN than the types you have locally, runtime validation via the contract will still enforce inputs/outputs. Treat the contract as the source of truth; update your dev-only type dependency when convenient, but don’t block on it to stay safe.
+
 ## Configuration (validated via Zod)
 
 - `discourseBaseUrl` **required**: Base Discourse URL.

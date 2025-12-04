@@ -42,6 +42,36 @@ const emptyRes = (): MockResponse =>
     text: async () => "",
   });
 
+type VitestWithTimers = typeof vi & {
+  runAllTimers?: () => void;
+  runAllTimersAsync?: () => Promise<void>;
+  advanceTimersByTime?: (ms: number) => void;
+  advanceTimersByTimeAsync?: (ms: number) => Promise<void>;
+};
+
+const runAllTimersAwaitable = async () => {
+  const timers = vi as VitestWithTimers;
+
+  if (typeof timers.runAllTimersAsync === "function") {
+    await timers.runAllTimersAsync();
+    return;
+  }
+
+  if (typeof timers.runAllTimers === "function") {
+    timers.runAllTimers();
+    return;
+  }
+
+  if (typeof timers.advanceTimersByTimeAsync === "function") {
+    await timers.advanceTimersByTimeAsync(2_000);
+    return;
+  }
+
+  if (typeof timers.advanceTimersByTime === "function") {
+    timers.advanceTimersByTime(2_000);
+  }
+};
+
 type RunEffect = <A, E = unknown>(eff: Effect.Effect<A, E, never>) => Promise<A>;
 const run: RunEffect = (eff) => Effect.runPromise(eff);
 
@@ -165,6 +195,7 @@ const {
   noopLogger,
   createSafeLogger,
 } = await import("../../service");
+const { createDiscourseDeps } = await import("../../runtime/deps");
 
 describe("mapDiscourseApiError", () => {
   it("routes client errors to specific handlers with original message", () => {
@@ -464,6 +495,50 @@ describe("mapPluginError", () => {
   });
 });
 
+describe("createDiscourseDeps", () => {
+  it("increments eviction metrics and logs warnings when eviction occurs", () => {
+    const logger = {
+      error: vi.fn(),
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    const config = {
+      variables: {
+        discourseBaseUrl: "https://discuss.example.com",
+        discourseApiUsername: "system",
+        clientId: "client-id",
+        requestTimeoutMs: 1000,
+        nonceTtlMs: 1000,
+        nonceCleanupIntervalMs: 1000,
+        nonceMaxPerClient: undefined,
+        nonceMaxTotal: 1,
+        nonceLimitStrategy: { global: "evictOldest" },
+        userApiScopes: ["read"],
+        logBodySnippetLength: 50,
+      },
+      secrets: { discourseApiKey: "key" },
+    };
+
+    const metrics = { retryAttempts: 0, nonceEvictions: 0 };
+    const { nonceManager } = createDiscourseDeps(config as any, logger as any, metrics);
+
+    nonceManager.create("client-a", "pk1");
+    nonceManager.create("client-b", "pk2");
+
+    expect(metrics.nonceEvictions).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Nonce eviction occurred",
+      expect.objectContaining({
+        action: "nonce-eviction",
+        count: 1,
+        type: "global",
+      })
+    );
+  });
+});
+
 describe(
   "DiscourseService",
   withFetch((fetchMock) => {
@@ -563,7 +638,7 @@ describe(
           .spyOn(service as any, "fetchApi")
           .mockResolvedValue(undefined);
 
-        const result = await service.checkHealth({ timeoutMs: -10 });
+        const result = await run(service.checkHealth({ timeoutMs: -10 }));
 
         expect(result).toBe(true);
         expect(fetchApiSpy).toHaveBeenCalledWith("/site/status", {
@@ -581,7 +656,7 @@ describe(
           .mockRejectedValueOnce(new Error("head not allowed"))
           .mockResolvedValueOnce(undefined);
 
-        const result = await service.checkHealth({ timeoutMs: 1000 });
+        const result = await run(service.checkHealth({ timeoutMs: 1000 }));
 
         expect(result).toBe(true);
         expect(fetchApiSpy).toHaveBeenNthCalledWith(1, "/site/status", {
@@ -596,6 +671,27 @@ describe(
         });
 
         fetchApiSpy.mockRestore();
+      });
+
+      it("logs a warning and returns false when all probes fail", async () => {
+        const fetchApiSpy = vi.spyOn(service as any, "fetchApi").mockRejectedValue(new Error("boom"));
+        const warn = vi.fn();
+        const debug = vi.fn();
+        const originalLogger = (service as any).logger;
+        (service as any).logger = { ...originalLogger, warn, debug };
+
+        const result = await run(service.checkHealth({ timeoutMs: 500 }));
+
+        expect(result).toBe(false);
+        expect(fetchApiSpy).toHaveBeenCalledTimes(3);
+        expect(warn).toHaveBeenCalledWith("All health probes failed", {
+          action: "health-check",
+          timeoutMs: 500,
+        });
+        expect(debug).toHaveBeenCalledTimes(3);
+
+        fetchApiSpy.mockRestore();
+        (service as any).logger = originalLogger;
       });
     });
 
@@ -1598,6 +1694,26 @@ describe(
         randomSpy.mockRestore();
       });
 
+      it("caps retry-after delays when retry metadata is extreme", () => {
+        const retryService = new DiscourseService(
+          "https://discuss.example.com",
+          "api-key",
+          "system",
+          noopLogger,
+          { retryPolicy: { maxRetries: 1, maxDelayMs: 500, jitterRatio: 0 } }
+        ) as any;
+        const error = new DiscourseApiError({
+          status: 503,
+          path: "/retry-long",
+          method: "GET",
+          retryAfterMs: 10_000,
+        });
+
+        const delay = retryService.computeDelayMs(error, 0);
+
+        expect(delay).toBe(500);
+      });
+
       it("normalizes retry policy overrides to safe defaults", () => {
         const policyService = new DiscourseService(
           "https://discuss.example.com",
@@ -1609,177 +1725,76 @@ describe(
               maxRetries: -1,
               baseDelayMs: Number.NaN,
               maxDelayMs: -5,
-              jitterRatio: -0.5,
-            },
-          }
-        ) as any;
+            jitterRatio: -0.5,
+          },
+        }
+      ) as any;
 
-        expect(policyService.retryPolicy).toEqual({
-          maxRetries: 0,
-          baseDelayMs: 250,
-          maxDelayMs: 5000,
-          jitterRatio: 0.2,
-        });
+      expect(policyService.retryPolicy).toEqual({
+        maxRetries: 0,
+        baseDelayMs: 250,
+        maxDelayMs: 5000,
+        jitterRatio: 0.2,
       });
+    });
 
-      it("logs retries and skips waiting when delay is non-positive", async () => {
-        const retryService = new DiscourseService(
-          "https://discuss.example.com",
-          "api-key",
-          "system",
-          noopLogger,
-          { retryPolicy: { maxRetries: 1 } }
-        ) as any;
-        const error = new DiscourseApiError({
-          status: 503,
-          path: "/retry",
-          method: "GET",
-          retryAfterMs: 0,
-        });
-        const fn = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce("ok");
-        const computeSpy = vi.spyOn(retryService, "computeDelayMs").mockReturnValue(0);
-        const logSpy = vi.spyOn(retryService, "logRequest");
-        const sleepSpy = vi.spyOn(retryService, "sleep");
+      it("relies on the transport retry loop and request logging", async () => {
+        vi.useFakeTimers();
 
-        const result = await retryService.runWithRetry(() => fn(), {
-          url: "/retry",
-          method: "GET",
-        });
+        try {
+          const fetchImpl = vi
+            .fn()
+            .mockResolvedValueOnce(
+              makeRes({
+                ok: false,
+                status: 503,
+                headers: {
+                  get: (key: string) => {
+                    if (key === "retry-after") return "1";
+                    if (key === "content-length") return null;
+                    return null;
+                  },
+                },
+                text: async () => "temporary",
+              })
+            )
+            .mockResolvedValueOnce(makeRes());
+          const requestLogger = vi.fn();
+          const retryService = new DiscourseService(
+            "https://discuss.example.com",
+            "api-key",
+            "system",
+            noopLogger,
+            {
+              retryPolicy: { maxRetries: 1, baseDelayMs: 1000, maxDelayMs: 2000, jitterRatio: 0 },
+              requestLogger,
+              fetchImpl: fetchImpl as any,
+            }
+          );
 
-        expect(result).toBe("ok");
-        expect(logSpy).toHaveBeenCalledWith(
-          expect.objectContaining({
-            status: 503,
-            retryDelayMs: 0,
-            outcome: "retry",
-          })
-        );
-        expect(sleepSpy).toHaveBeenCalledWith(0);
+      const resultPromise = retryService.fetchApi("/retry", { method: "GET" });
 
-        computeSpy.mockRestore();
-        logSpy.mockRestore();
-        sleepSpy.mockRestore();
-      });
+      await runAllTimersAwaitable();
+      const result = await resultPromise;
 
-      it("retries server errors without retry-after metadata", async () => {
-        const retryService = new DiscourseService(
-          "https://discuss.example.com",
-          "api-key",
-          "system",
-          noopLogger,
-          { retryPolicy: { maxRetries: 1 } }
-        ) as any;
-
-        const error = new DiscourseApiError({
-          status: 500,
-          path: "/retry-no-header",
-          method: "GET",
-        });
-
-        const fn = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce("ok");
-        const computeSpy = vi.spyOn(retryService, "computeDelayMs").mockReturnValue(0);
-        const sleepSpy = vi.spyOn(retryService, "sleep").mockResolvedValue(undefined);
-
-        const result = await retryService.runWithRetry(() => fn(), {
-          url: "/retry-no-header",
-          method: "GET",
-        });
-
-        expect(result).toBe("ok");
-        expect(computeSpy).toHaveBeenCalledWith(error, 0, expect.any(Object));
-        expect(sleepSpy).toHaveBeenCalledWith(0);
-
-        computeSpy.mockRestore();
-        sleepSpy.mockRestore();
-      });
-
-      it("retries transient client errors such as request timeouts", async () => {
-        const retryService = new DiscourseService(
-          "https://discuss.example.com",
-          "api-key",
-          "system",
-          noopLogger,
-          { retryPolicy: { maxRetries: 1 } }
-        ) as any;
-
-        const timeoutError = new DiscourseApiError({
-          status: 408,
-          path: "/retry-timeout",
-          method: "GET",
-        });
-
-        const fn = vi.fn().mockRejectedValueOnce(timeoutError).mockResolvedValueOnce("ok");
-        const sleepSpy = vi.spyOn(retryService, "sleep").mockResolvedValue(undefined);
-
-        const result = await retryService.runWithRetry(() => fn(), {
-          url: "/retry-timeout",
-          method: "GET",
-        });
-
-        expect(result).toBe("ok");
-        expect(fn).toHaveBeenCalledTimes(2);
-        expect(sleepSpy).toHaveBeenCalledWith(expect.any(Number));
-
-        sleepSpy.mockRestore();
-      });
-
-      it("retries generic transport errors once", async () => {
-        const retryService = new DiscourseService(
-          "https://discuss.example.com",
-          "api-key",
-          "system",
-          noopLogger,
-          { retryPolicy: { maxRetries: 1 } }
-        ) as any;
-
-        const transportError = new Error("network down");
-        const fn = vi.fn().mockRejectedValueOnce(transportError).mockResolvedValueOnce("ok");
-        const computeSpy = vi.spyOn(retryService, "computeDelayMs").mockReturnValue(0);
-        const sleepSpy = vi.spyOn(retryService, "sleep").mockResolvedValue(undefined);
-
-        const result = await retryService.runWithRetry(() => fn(), {
-          url: "/retry-transport",
-          method: "GET",
-        });
-
-        expect(result).toBe("ok");
-        expect(computeSpy).toHaveBeenCalledWith(transportError, 0, expect.any(Object));
-        expect(sleepSpy).toHaveBeenCalledWith(0);
-
-        computeSpy.mockRestore();
-        sleepSpy.mockRestore();
-      });
-
-      it("captures status when retry logging is triggered", async () => {
-        const retryService = new DiscourseService(
-          "https://discuss.example.com",
-          "api-key",
-          "system",
-          noopLogger,
-          { retryPolicy: { maxRetries: 1 } }
-        ) as any;
-        const error = new DiscourseApiError({
-          status: 429,
-          path: "/retry",
-          method: "GET",
-          retryAfterMs: 10,
-        });
-        const fn = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce("ok");
-        const logSpy = vi.spyOn(retryService, "logRequest");
-        const sleepSpy = vi.spyOn(retryService, "sleep").mockResolvedValue(undefined as any);
-
-        await retryService.runWithRetry(() => fn(), { url: "/retry", method: "GET" });
-
-        expect(logSpy).toHaveBeenCalledWith(
-          expect.objectContaining({
-            status: 429,
-            outcome: "retry",
-          })
-        );
-        expect(sleepSpy).toHaveBeenCalled();
-
-        logSpy.mockRestore();
-        sleepSpy.mockRestore();
+          expect(result).toEqual({});
+          expect(fetchImpl).toHaveBeenCalledTimes(2);
+          expect(requestLogger).toHaveBeenCalledWith(
+            expect.objectContaining({
+              outcome: "retry",
+              retryDelayMs: 1000,
+              attempt: 1,
+            })
+          );
+          expect(requestLogger).toHaveBeenCalledWith(
+            expect.objectContaining({
+              outcome: "success",
+              attempt: 2,
+            })
+          );
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it("uses operation defaults when per-request overrides are absent", () => {
@@ -1813,7 +1828,7 @@ describe(
         expect(merged.maxDelayMs).toBe(1000);
       });
 
-      it("uses operation-specific retry policies for reads and writes", async () => {
+      it("uses operation-specific retry policies for reads and writes", () => {
         const retryService = new DiscourseService(
           "https://discuss.example.com",
           "api-key",
@@ -1825,32 +1840,11 @@ describe(
           }
         ) as any;
 
-        const readError = new DiscourseApiError({
-          status: 503,
-          path: "/read",
-          method: "GET",
-        });
-        const readFn = vi.fn().mockRejectedValue(readError);
+        const readPolicy = retryService.resolveRetryPolicy("GET");
+        const writePolicy = retryService.resolveRetryPolicy("POST");
 
-        await expect(
-          retryService.runWithRetry(
-            () => readFn(),
-            { url: "/read", method: "GET" },
-            retryService.resolveRetryPolicy("GET")
-          )
-        ).rejects.toBe(readError);
-        expect(readFn).toHaveBeenCalledTimes(1);
-
-        const writeFn = vi.fn().mockRejectedValueOnce(new Error("transient")).mockResolvedValueOnce("ok");
-
-        const writeResult = await retryService.runWithRetry(
-          () => writeFn(),
-          { url: "/write", method: "POST" },
-          retryService.resolveRetryPolicy("POST")
-        );
-
-        expect(writeResult).toBe("ok");
-        expect(writeFn).toHaveBeenCalledTimes(2);
+        expect(readPolicy.maxRetries).toBe(0);
+        expect(writePolicy.maxRetries).toBe(1);
       });
     });
 
@@ -2745,7 +2739,7 @@ describe(
         expect(result).toEqual({ locked: true });
       });
 
-      it("performs a like action with mapping and undo defaults", async () => {
+      it("performs a like action with mapping and perform mode defaults", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
             json: async () => ({ id: 123, post_action_type_id: 2, success: "OK" }),
@@ -2780,7 +2774,9 @@ describe(
           postActionTypeId: 2,
           postActionId: 123,
         });
+      });
 
+      it("marks undo mode automatically for unlike actions", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
             json: async () => ({ success: true }),
@@ -2796,10 +2792,76 @@ describe(
           })
         );
 
-        expect((fetchMock.mock.calls[1]?.[1] as any)?.body).toContain(
+        expect((fetchMock.mock.calls[0]?.[1] as any)?.body).toContain(
           '"undo":true'
         );
         expect(undoResult.postActionTypeId).toBe(2);
+      });
+
+      it("flags a topic when flag mode is provided", async () => {
+        fetchMock.mockResolvedValueOnce(
+          makeRes({
+            json: async () => ({ id: 321, post_action_type_id: 3, success: true }),
+          })
+        );
+
+        await run(
+          service.performPostAction({
+            postId: 5,
+            action: "flag",
+            username: "mod",
+            mode: { mode: "flag", target: "topic", resolution: "flag" },
+            message: "spam",
+          })
+        );
+
+        const [, request] = fetchMock.mock.calls[0] ?? [];
+        expect(request).toEqual(
+          expect.objectContaining({
+            method: "POST",
+          })
+        );
+        expect(JSON.parse((request as any)?.body)).toEqual(
+          expect.objectContaining({
+            id: 5,
+            post_action_type_id: 3,
+            flag_topic: true,
+            undo: false,
+            message: "spam",
+          })
+        );
+      });
+
+      it("sends take_action when requested via flag mode resolution", async () => {
+        fetchMock.mockResolvedValueOnce(
+          makeRes({
+            json: async () => ({ id: 222, post_action_type_id: 4, success: true }),
+          })
+        );
+
+        await run(
+          service.performPostAction({
+            postId: 6,
+            action: "flag",
+            username: "mod",
+            mode: { mode: "flag", target: "post", resolution: "take_action" },
+          })
+        );
+
+        const [, request] = fetchMock.mock.calls[0] ?? [];
+        expect(request).toEqual(
+          expect.objectContaining({
+            method: "POST",
+          })
+        );
+        expect(JSON.parse((request as any)?.body)).toEqual(
+          expect.objectContaining({
+            id: 6,
+            post_action_type_id: 3,
+            take_action: true,
+            undo: false,
+          })
+        );
       });
 
       it("throws when action type cannot be resolved", async () => {
@@ -2814,7 +2876,7 @@ describe(
         ).rejects.toThrow("Unsupported or missing post action type");
       });
 
-      it("defaults to success when success flag is invalid", async () => {
+      it("throws when success flag is missing or invalid", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
             json: async () => ({
@@ -2825,15 +2887,15 @@ describe(
           })
         );
 
-        const result = await run(
-          service.performPostAction({
-            postId: 9,
-            action: "like",
-            username: "alice",
-          })
-        );
-
-        expect(result.success).toBe(true);
+        await expect(
+          run(
+            service.performPostAction({
+              postId: 9,
+              action: "like",
+              username: "alice",
+            })
+          )
+        ).rejects.toThrow("Post action response missing explicit success flag");
       });
 
       it("parses string success flags and preserves explicit false values", async () => {
@@ -2880,17 +2942,19 @@ describe(
             username: "alice",
           })
         );
-        const blank = await run(
-          service.performPostAction({
-            postId: 11,
-            action: "like",
-            username: "alice",
-          })
-        );
 
         expect(truthy.success).toBe(true);
         expect(falsy.success).toBe(false);
-        expect(blank.success).toBe(true);
+
+        await expect(
+          run(
+            service.performPostAction({
+              postId: 11,
+              action: "like",
+              username: "alice",
+            })
+          )
+        ).rejects.toThrow("Post action response missing explicit success flag");
       });
 
       it("deletes a post with optional force destroy", async () => {
@@ -2955,17 +3019,17 @@ describe(
         expect(resolved).toBe(5);
       });
 
-      it("falls back to success when delete post response is empty", async () => {
+      it("throws when delete post response is empty", async () => {
         fetchMock.mockResolvedValueOnce(emptyRes());
 
-        const result = await run(
-          service.deletePost({
-            postId: 46,
-            username: "moderator",
-          })
-        );
-
-        expect(result).toEqual({ success: true });
+        await expect(
+          run(
+            service.deletePost({
+              postId: 46,
+              username: "moderator",
+            })
+          )
+        ).rejects.toThrow("Delete post response missing explicit success flag");
       });
     });
 
@@ -3472,6 +3536,22 @@ describe(
             })
           )
         ).rejects.toThrow("Empty revision response");
+      });
+    });
+
+    describe("mapping helpers", () => {
+      it("maps topic, category, and revision via exposed test helpers", () => {
+        const topic = (service as any).mapTopic(validTopicPayload());
+        expect(topic.slug).toBe(validTopicPayload().slug);
+
+        const category = (service as any).mapCategory(validCategoryPayload());
+        expect(category.id).toBe(validCategoryPayload().id);
+
+        const revisionWithRaw = (service as any).mapRevision(validRevisionPayload(), true);
+        expect(revisionWithRaw.raw).toBe(validRevisionPayload().raw);
+
+        const revisionWithoutRaw = (service as any).mapRevision(validRevisionPayload(), false);
+        expect(revisionWithoutRaw.raw).toBeUndefined();
       });
     });
 
@@ -6190,7 +6270,7 @@ describe(
         expect(result).toEqual({
           valid: false,
           error: "API key invalid: weird failure",
-          retryable: true,
+          retryable: false,
         });
       });
 
@@ -6202,7 +6282,7 @@ describe(
         expect(result).toEqual({
           valid: false,
           error: "API key invalid: [object Object]",
-          retryable: true,
+          retryable: false,
         });
       });
 
@@ -6342,7 +6422,7 @@ describe(
         expect(result).toEqual({
           valid: false,
           error: "API key invalid: getter boom",
-          retryable: true,
+          retryable: false,
         });
       });
 

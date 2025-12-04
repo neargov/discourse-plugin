@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { FiberFailureCauseId, FiberFailureId } from "effect/Runtime";
+import { Runtime } from "every-plugin/effect";
+
+const { FiberFailureId, FiberFailureCauseId } = Runtime;
 import {
   effectHelpers,
   formatError,

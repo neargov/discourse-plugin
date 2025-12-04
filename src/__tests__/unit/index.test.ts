@@ -3,13 +3,19 @@ import { Effect } from "every-plugin/effect";
 import DiscoursePlugin, {
   createWithErrorLogging,
   sanitizeErrorForLog,
+  resolveBodySnippet,
+  resolveCause,
   mapDiscourseApiError,
   normalizeUserApiScopes,
   createRouter,
   mapValidateUserApiKeyResult,
   VariablesSchema,
   RouterConfigError,
+  __internalCreateRouterHelpers,
+  __internalCreateCache,
+  __internalCreateRateLimiter,
 } from "../../index";
+import { DEFAULT_BODY_SNIPPET_LENGTH } from "../../constants";
 import {
   ListTopicListInputSchema,
   TopicNotificationLevelSchema,
@@ -22,6 +28,33 @@ import {
 } from "../../service";
 import { effectHelpers } from "../../utils";
 import { uploadPayload } from "../../tests/fixtures";
+
+const buildMockContext = () => ({
+  discourseService: {},
+  cryptoService: {},
+  nonceManager: new NonceManager({ ttlMs: 1000 }),
+  config: {
+    variables: {
+      discourseBaseUrl: "https://example.com",
+      discourseApiUsername: "system",
+      clientId: "client",
+      requestTimeoutMs: 1000,
+      requestsPerSecond: 5,
+      cacheMaxSize: 10,
+      cacheTtlMs: 1000,
+      nonceTtlMs: 1000,
+      nonceCleanupIntervalMs: 1000,
+      userApiScopes: normalizeUserApiScopes(["read"]),
+      logBodySnippetLength: DEFAULT_BODY_SNIPPET_LENGTH,
+    },
+    secrets: { discourseApiKey: "key" },
+  },
+  logger: createSafeLogger(noopLogger),
+  normalizedUserApiScopes: normalizeUserApiScopes(["read"]),
+  cleanupFiber: null,
+  bodySnippetLength: DEFAULT_BODY_SNIPPET_LENGTH,
+  metrics: { retryAttempts: 0, nonceEvictions: 0 },
+});
 
 describe("sanitizeErrorForLog", () => {
   it("returns a message payload when serialization yields a string", () => {
@@ -110,6 +143,29 @@ describe("sanitizeErrorForLog", () => {
 
     expect(sanitizeErrorForLog(error, 5)).toEqual(
       expect.objectContaining({ bodySnippet: "avery" })
+    );
+  });
+
+  it("delegates to helpers for generic and Discourse errors", () => {
+    const generic = new Error("generic boom");
+    (generic as any).cause = new Error("root cause");
+    const discourse = new DiscourseApiError({
+      status: 429,
+      path: "/limited",
+      method: "GET",
+      retryAfterMs: 1000,
+      bodySnippet: "limited payload",
+    });
+
+    const cause = (generic as any).cause;
+    expect(resolveCause(cause)).toBe("root cause");
+    expect(resolveBodySnippet(generic, 5)).toBeUndefined();
+    expect(resolveBodySnippet(discourse, 6)).toBe("limite");
+    expect(sanitizeErrorForLog(discourse, 6)).toEqual(
+      expect.objectContaining({
+        bodySnippet: "limite",
+        status: 429,
+      })
     );
   });
 });
@@ -205,13 +261,16 @@ describe("withErrorLogging", () => {
       variables: {
         discourseBaseUrl: "https://example.com",
         discourseApiUsername: "system",
-        clientId: "client",
-        requestTimeoutMs: 1000,
-        nonceTtlMs: 2000,
-        nonceCleanupIntervalMs: 1000,
-        userApiScopes: normalizeUserApiScopes(["read", "write"]),
-        logBodySnippetLength: 500,
-      },
+      clientId: "client",
+      requestTimeoutMs: 1000,
+      requestsPerSecond: 5,
+      cacheMaxSize: 10,
+      cacheTtlMs: 1000,
+      nonceTtlMs: 2000,
+      nonceCleanupIntervalMs: 1000,
+      userApiScopes: normalizeUserApiScopes(["read", "write"]),
+      logBodySnippetLength: 500,
+    },
       secrets: { discourseApiKey: "secret" },
     } as const);
 
@@ -232,7 +291,7 @@ describe("withErrorLogging", () => {
     return { log, logSpy };
   };
 
-  it("retries once when retry-after metadata is present", async () => {
+  it("does not retry Discourse errors without an explicit retry policy", async () => {
     const { log, logSpy } = makeLogger();
     const nonceManager = new NonceManager();
     const error = new DiscourseApiError({
@@ -241,15 +300,9 @@ describe("withErrorLogging", () => {
       method: "GET",
       retryAfterMs: 2500,
     });
-    const fn = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw error;
-      })
-      .mockResolvedValueOnce("ok");
-    const sleepSpy = vi
-      .spyOn(effectHelpers, "sleep")
-      .mockImplementation((ms) => Effect.succeed(ms));
+    const fn = vi.fn().mockImplementationOnce(() => {
+      throw error;
+    });
 
     const withErrorLogging = createWithErrorLogging({
       log,
@@ -258,72 +311,21 @@ describe("withErrorLogging", () => {
       config: makeConfig(),
     });
 
-    const result = await withErrorLogging("retry-action", () => fn(), {});
+    await expect(
+      withErrorLogging("retry-action", () => fn(), {})
+    ).rejects.toBe(error);
 
-    expect(result).toBe("ok");
-    expect(fn).toHaveBeenCalledTimes(2);
-    expect(sleepSpy).toHaveBeenCalledWith(1000);
+    expect(fn).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        level: "warn",
-        message: "Discourse request retrying after retry-after",
+        level: "error",
+        message: "retry-action failed",
         meta: expect.objectContaining({
           action: "retry-action",
-          retryAfterMs: 1000,
-          status: 503,
-          path: "/retry",
+          attempt: 1,
         }),
       })
     );
-
-    sleepSpy.mockRestore();
-  });
-
-  it("retries server errors above 500 using retry-after metadata", async () => {
-    const { log, logSpy } = makeLogger();
-    const nonceManager = new NonceManager();
-    const error = new DiscourseApiError({
-      status: 500,
-      path: "/retry",
-      method: "GET",
-      retryAfterMs: 2500,
-    });
-    const fn = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw error;
-      })
-      .mockResolvedValueOnce("ok");
-    const sleepSpy = vi
-      .spyOn(effectHelpers, "sleep")
-      .mockImplementation((ms) => Effect.succeed(ms));
-
-    const withErrorLogging = createWithErrorLogging({
-      log,
-      run: Effect.runPromise,
-      nonceManager,
-      config: makeConfig(),
-    });
-
-    const result = await withErrorLogging("retry-server", () => fn(), {});
-
-    expect(result).toBe("ok");
-    expect(fn).toHaveBeenCalledTimes(2);
-    expect(sleepSpy).toHaveBeenCalledWith(1000);
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        level: "warn",
-        message: "Discourse request retrying after retry-after",
-        meta: expect.objectContaining({
-          action: "retry-server",
-          retryAfterMs: 1000,
-          status: 500,
-          path: "/retry",
-        }),
-      })
-    );
-
-    sleepSpy.mockRestore();
   });
 
   it("logs and maps errors when retry is not available", async () => {
@@ -396,135 +398,192 @@ describe("withErrorLogging", () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
-  it("retries transport errors when configured", async () => {
-    const { log, logSpy } = makeLogger();
+  it("does not retry when transport-level failures occur", async () => {
+    const { logSpy, log } = makeLogger();
     const nonceManager = new NonceManager();
-    const sleepSpy = vi
-      .spyOn(effectHelpers, "sleep")
-      .mockImplementation((ms) => Effect.succeed(ms));
     const fn = vi
       .fn()
       .mockImplementationOnce(() => {
         throw new Error("network blip");
-      })
-      .mockResolvedValueOnce("ok");
+      });
 
     const withErrorLogging = createWithErrorLogging({
       log,
       run: Effect.runPromise,
       nonceManager,
       config: makeConfig(),
-      retryPolicy: {
-        retryOnTransportError: true,
-        minDelayMs: 10,
-        maxAttempts: 3,
-      },
     });
 
-    const result = await withErrorLogging("transport-retry", () => fn(), {});
-
-    expect(result).toBe("ok");
-    expect(fn).toHaveBeenCalledTimes(2);
-    expect(sleepSpy).toHaveBeenCalledWith(10);
-    expect(logSpy).toHaveBeenCalledWith({
-      level: "warn",
-      message: "Discourse request retrying after transport error",
-      meta: {
-        action: "transport-retry",
-        retryAfterMs: 10,
-        status: undefined,
-        path: undefined,
-        attempt: 1,
-        transportRetry: true,
-      },
-    });
-
-    sleepSpy.mockRestore();
+    await expect(withErrorLogging("transport-retry", () => fn(), {})).rejects.toThrow(
+      "network blip"
+    );
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        meta: expect.objectContaining({ action: "transport-retry", attempt: 1 }),
+      })
+    );
   });
 
-  it("records retry attempts through metrics hooks", async () => {
-    const { log } = makeLogger();
+  it("logs failure metadata when the handler rejects asynchronously", async () => {
+    const { logSpy, log } = makeLogger();
     const nonceManager = new NonceManager();
-    const sleepSpy = vi
-      .spyOn(effectHelpers, "sleep")
-      .mockImplementation((ms) => Effect.succeed(ms));
-    const metrics = { attempts: 0 };
+    const boom = new Error("async-fail");
+
     const withErrorLogging = createWithErrorLogging({
       log,
       run: Effect.runPromise,
       nonceManager,
       config: makeConfig(),
-      retryPolicy: {
-        retryOnTransportError: true,
-        minDelayMs: 5,
-        maxAttempts: 2,
-      },
-      metrics: {
-        recordRetryAttempt: ({ attempt, delayMs, status }) => {
-          metrics.attempts += 1;
-          expect(attempt).toBe(1);
-          expect(delayMs).toBe(5);
-          expect(status).toBeUndefined();
-        },
-      },
     });
 
-    const fn = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw new Error("network blip");
+    await expect(
+      withErrorLogging("async-action", async () => {
+        return Promise.reject(boom);
+      }, {})
+    ).rejects.toBe(boom);
+
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        message: "async-action failed",
+        meta: expect.objectContaining({
+          action: "async-action",
+          attempt: 1,
+          error: expect.objectContaining({ message: "async-fail" }),
+        }),
       })
-      .mockResolvedValueOnce("ok");
+    );
+  });
+});
 
-    const result = await withErrorLogging("metrics-retry", () => fn(), {});
+describe("rate limiting and caching helpers", () => {
+  it("throttles and reports retry-after when the bucket is empty", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const limiter = __internalCreateRateLimiter(Number.NaN as any);
 
-    expect(result).toBe("ok");
-    expect(metrics.attempts).toBe(1);
+    expect(limiter.take()).toEqual({ allowed: true, retryAfterMs: 0 });
 
-    sleepSpy.mockRestore();
+    now.mockReturnValue(1);
+    const limited = limiter.take();
+    expect(limited.allowed).toBe(false);
+    expect(limited.retryAfterMs).toBeGreaterThanOrEqual(999);
+
+    now.mockReturnValue(1001);
+
+    expect(limiter.take().allowed).toBe(true);
+    now.mockRestore();
   });
 
-  it("records retry attempts with Discourse status metadata", async () => {
-    const { log } = makeLogger();
-    const nonceManager = new NonceManager();
-    const sleepSpy = vi
-      .spyOn(effectHelpers, "sleep")
-      .mockImplementation((ms) => Effect.succeed(ms));
-    const metrics = { attempts: 0 };
-    const error = new DiscourseApiError({
-      status: 429,
-      path: "/limited",
-      method: "GET",
-      retryAfterMs: 500,
+  it("evicts expired and oldest cache entries while tracking stats", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(0);
+    const cache = __internalCreateCache(1, 50);
+
+    cache.set("a", "one");
+    now.mockReturnValue(25);
+    expect(cache.get("a")).toBe("one");
+
+    cache.set("b", "two");
+    expect(cache.get("a")).toBeUndefined();
+
+    now.mockReturnValue(80);
+    expect(cache.get("b")).toBeUndefined();
+
+    expect(cache.stats()).toEqual({ size: 0, hits: 1, misses: 2, ttlMs: 50 });
+    now.mockRestore();
+  });
+
+  it("logs cache hits and fills via router helpers", async () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const context = {
+      ...buildMockContext(),
+      logger,
+      rateLimiter: { take: () => ({ allowed: true, retryAfterMs: 0 }) },
+      cache: __internalCreateCache(2, 1000),
+    };
+    const helpers = __internalCreateRouterHelpers(context as any);
+    const fetch = vi.fn().mockResolvedValue("cached-value");
+
+    const first = await helpers.withCache({
+      action: "cached",
+      key: "cache-key",
+      fetch,
+    });
+    const second = await helpers.withCache({
+      action: "cached",
+      key: "cache-key",
+      fetch,
     });
 
-    const withErrorLogging = createWithErrorLogging({
-      log,
-      run: Effect.runPromise,
-      nonceManager,
-      config: makeConfig(),
-      metrics: {
-        recordRetryAttempt: ({ status }) => {
-          metrics.attempts += 1;
-          expect(status).toBe(429);
-        },
+    expect(first).toBe("cached-value");
+    expect(second).toBe("cached-value");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(logger.debug).toHaveBeenCalledWith("Cache filled", {
+      action: "cached",
+      cacheKey: "cache-key",
+    });
+    expect(logger.debug).toHaveBeenCalledWith("Cache hit", {
+      action: "cached",
+      cacheKey: "cache-key",
+    });
+    expect(helpers.cacheStats()).toEqual(
+      expect.objectContaining({ hits: 1, misses: 1, size: 1, ttlMs: 1000 })
+    );
+  });
+
+  it("maps rate limit overflow to TOO_MANY_REQUESTS and logs metadata", () => {
+    const warn = vi.fn();
+    const context = {
+      ...buildMockContext(),
+      logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn,
+        error: vi.fn(),
+      },
+      rateLimiter: { take: () => ({ allowed: false, retryAfterMs: 250 }) },
+      cache: __internalCreateCache(1, 1000),
+    };
+    const helpers = __internalCreateRouterHelpers(context as any);
+    const errors = {
+      TOO_MANY_REQUESTS: vi.fn(({ message, data }) => new Error(`${message}:${data.retryAfterMs}`)),
+    };
+
+    expect(() => helpers.enforceRateLimit("limited-action", errors as any)).toThrow(
+      "Rate limit exceeded:250"
+    );
+    expect(errors.TOO_MANY_REQUESTS).toHaveBeenCalledWith({
+      message: "Rate limit exceeded",
+      data: {
+        retryAfter: 1,
+        retryAfterMs: 250,
+        remainingRequests: 0,
+        limitType: "requests",
       },
     });
+    expect(warn).toHaveBeenCalledWith("Rate limit exceeded", {
+      action: "limited-action",
+      retryAfterMs: 250,
+    });
+  });
 
-    const fn = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw error;
-      })
-      .mockResolvedValueOnce("ok");
+  it("throws a RouterConfigError when rate-limit constructors are missing", () => {
+    const context = {
+      ...buildMockContext(),
+      rateLimiter: { take: () => ({ allowed: false, retryAfterMs: 0 }) },
+      cache: __internalCreateCache(1, 1000),
+    };
+    const helpers = __internalCreateRouterHelpers(context as any);
 
-    const result = await withErrorLogging("retry-limited", () => fn(), {});
-
-    expect(result).toBe("ok");
-    expect(metrics.attempts).toBe(1);
-    expect(sleepSpy).toHaveBeenCalledWith(500);
-
-    sleepSpy.mockRestore();
+    expect(() => helpers.enforceRateLimit("limited-action", {} as any)).toThrow(
+      new RouterConfigError("TOO_MANY_REQUESTS constructor missing for rate limiting")
+    );
   });
 });
 
@@ -620,26 +679,10 @@ describe("createRouter retry policy wiring", () => {
   const makeRouter = (context: any) =>
     createRouter(context as any, builder as any) as any;
 
-  it("derives read retry policy and records retry attempts", async () => {
-    let attempts = 0;
-    const searchMock = vi.fn(() => {
-      attempts += 1;
-      if (attempts === 1) {
-        return Effect.fail(new Error("transport"));
-      }
-      return Effect.succeed({
-        posts: [],
-        topics: [],
-        users: [],
-        categories: [],
-        totalResults: 0,
-        hasMore: false,
-      });
-    });
+  it("defers retries to the service layer", async () => {
+    const searchMock = vi.fn(() => Effect.fail(new Error("transport")));
     const metrics = { retryAttempts: 0, nonceEvictions: 0 };
-    const sleepSpy = vi
-      .spyOn(effectHelpers, "sleep")
-      .mockImplementation((ms) => Effect.succeed(ms));
+    const sleepSpy = vi.spyOn(effectHelpers, "sleep");
 
     const context: any = {
       discourseService: { search: searchMock },
@@ -668,21 +711,16 @@ describe("createRouter retry policy wiring", () => {
 
     const router = makeRouter(context);
 
-    const result = await router.search({
-      input: { query: "foo" },
-      errors: {},
-    });
+    await expect(
+      router.search({
+        input: { query: "foo" },
+        errors: {},
+      })
+    ).rejects.toThrow("transport");
 
-    expect(result).toEqual({
-      posts: [],
-      topics: [],
-      users: [],
-      categories: [],
-      totalResults: 0,
-      hasMore: false,
-    });
-    expect(metrics.retryAttempts).toBe(1);
-    expect(sleepSpy).toHaveBeenCalledWith(0);
+    expect(metrics.retryAttempts).toBe(0);
+    expect(sleepSpy).not.toHaveBeenCalled();
+    expect(searchMock).toHaveBeenCalledTimes(1);
 
     sleepSpy.mockRestore();
   });
@@ -833,26 +871,10 @@ describe("createRouter retry policy wiring", () => {
     expect(metrics.retryAttempts).toBe(0);
   });
 
-  it("uses default retry overrides when specific policies are missing", async () => {
-    let attempts = 0;
-    const searchMock = vi.fn(() => {
-      attempts += 1;
-      if (attempts === 1) {
-        return Effect.fail(new Error("blip"));
-      }
-      return Effect.succeed({
-        posts: [],
-        topics: [],
-        users: [],
-        categories: [],
-        totalResults: 0,
-        hasMore: false,
-      });
-    });
+  it("ignores operation retry overrides at the router level", async () => {
+    const searchMock = vi.fn(() => Effect.fail(new Error("blip")));
     const metrics = { retryAttempts: 0, nonceEvictions: 0 };
-    const sleepSpy = vi
-      .spyOn(effectHelpers, "sleep")
-      .mockImplementation((ms) => Effect.succeed(ms));
+    const sleepSpy = vi.spyOn(effectHelpers, "sleep");
     const context: any = {
       discourseService: { search: searchMock },
       cryptoService: {},
@@ -882,23 +904,65 @@ describe("createRouter retry policy wiring", () => {
 
     const router = makeRouter(context);
 
-    const result = await router.search({
-      input: { query: "foo" },
-      errors: {},
+    await expect(
+      router.search({
+        input: { query: "foo" },
+        errors: {},
+      })
+    ).rejects.toThrow("blip");
+    expect(metrics.retryAttempts).toBe(0);
+    expect(searchMock).toHaveBeenCalledTimes(1);
+    expect(sleepSpy).not.toHaveBeenCalled();
+  });
+
+  it("makeHandler executes Effect-based handlers through run()", async () => {
+    const { makeHandler } = __internalCreateRouterHelpers(buildMockContext() as any);
+    const handler = makeHandler(
+      "effect-action",
+      ({ input }) => Effect.succeed({ echoed: input }),
+      () => ({ meta: true })
+    );
+
+    const result = await handler({
+      input: { value: 1 },
+      errors: {
+        BAD_REQUEST: vi.fn(),
+      } as any,
     });
 
-    expect(result).toEqual({
-      posts: [],
-      topics: [],
-      users: [],
-      categories: [],
-      totalResults: 0,
-      hasMore: false,
-    });
-    expect(metrics.retryAttempts).toBe(1);
-    expect(sleepSpy).toHaveBeenCalledWith(0);
+    expect(result).toEqual({ echoed: { value: 1 } });
+  });
 
-    sleepSpy.mockRestore();
+  it("disables cache storage when ttlMs is non-positive", () => {
+    const cache = __internalCreateCache(5, 0);
+
+    cache.set("key", "value");
+    const fetched = cache.get("key");
+    const stats = cache.stats();
+
+    expect(fetched).toBeUndefined();
+    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, ttlMs: 0 });
+  });
+
+  it("treats invalid cache size as disabled while preserving ttl metadata", () => {
+    const cache = __internalCreateCache(-5, 100);
+
+    cache.set("key", "value");
+    const fetched = cache.get("key");
+    const stats = cache.stats();
+
+    expect(fetched).toBeUndefined();
+    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, ttlMs: 100 });
+  });
+
+  it("exposes cache stats when cache is omitted", () => {
+    const helpers = __internalCreateRouterHelpers({
+      ...buildMockContext(),
+      // omit cache to trigger default stub
+      cache: undefined,
+    } as any);
+
+    expect(helpers.cacheStats()).toEqual({ size: 0, hits: 0, misses: 0, ttlMs: 0 });
   });
 });
 
@@ -1278,6 +1342,31 @@ describe("createRouter handlers", () => {
     expect(service.createUser).toHaveBeenCalled();
   });
 
+  it("does not cache getRevision across users", async () => {
+    const { context, service } = makeContext();
+    const cache = {
+      get: vi.fn(),
+      set: vi.fn(),
+      stats: vi.fn(() => ({ size: 0, hits: 0, misses: 0, ttlMs: 0 })),
+    };
+
+    context.cache = cache as any;
+    const router = makeRouter(context);
+
+    await router.getRevision({
+      input: { postId: 1, revision: 1, username: "alice", userApiKey: "token-a" },
+      errors: {},
+    });
+    await router.getRevision({
+      input: { postId: 1, revision: 1, username: "bob", userApiKey: "token-b" },
+      errors: {},
+    });
+
+    expect(service.getRevision).toHaveBeenCalledTimes(2);
+    expect(cache.get).not.toHaveBeenCalled();
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
   it("logs deletePost with default forceDestroy when omitted", async () => {
     const { context, service } = makeContext();
     const logSpy = vi.fn();
@@ -1566,12 +1655,17 @@ describe("validateUserApiKey router mapping", () => {
     ({
       variables: {
         discourseBaseUrl: "https://example.com",
-        discourseApiUsername: "system",
-        clientId: "client",
-        requestTimeoutMs: 1000,
-        nonceTtlMs: 2000,
-        nonceCleanupIntervalMs: 1000,
-      },
+      discourseApiUsername: "system",
+      clientId: "client",
+      requestTimeoutMs: 1000,
+      requestsPerSecond: 5,
+      cacheMaxSize: 10,
+      cacheTtlMs: 1000,
+      nonceTtlMs: 2000,
+      nonceCleanupIntervalMs: 1000,
+      userApiScopes: normalizeUserApiScopes(["read"]),
+      logBodySnippetLength: DEFAULT_BODY_SNIPPET_LENGTH,
+    },
       secrets: { discourseApiKey: "secret" },
       logger: noopLogger,
     } as const);

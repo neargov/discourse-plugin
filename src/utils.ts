@@ -1,6 +1,4 @@
-import { Effect } from "every-plugin/effect";
-import * as Fiber from "effect/Fiber";
-import { FiberFailureCauseId, isFiberFailure } from "effect/Runtime";
+import { Effect, Fiber, Runtime } from "every-plugin/effect";
 
 const safeStringify = (value: unknown): string => {
   try {
@@ -91,11 +89,11 @@ export const effectHelpers = {
 };
 
 export const unwrapError = (error: unknown): unknown => {
-  if (!isFiberFailure(error)) {
+  if (!Runtime.isFiberFailure(error)) {
     return error;
   }
 
-  const cause = (error as any)?.[FiberFailureCauseId];
+  const cause = (error as any)?.[Runtime.FiberFailureCauseId];
 
   if (cause?._tag === "Fail") {
     if ((cause as any).failure != null) {
