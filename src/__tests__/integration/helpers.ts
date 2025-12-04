@@ -1,7 +1,9 @@
 import type { PluginRegistry } from "every-plugin";
+import { Effect } from "every-plugin/effect";
 import { createLocalPluginRuntime } from "every-plugin/testing";
 import { vi } from "vitest";
 import DiscoursePlugin, { type DiscoursePluginConfigInput } from "../../index";
+import { interruptCleanupFiber } from "../../runtime/deps";
 
 export const TEST_REGISTRY: PluginRegistry = {
   "discourse-plugin": {
@@ -42,14 +44,43 @@ export const buildConfig = (overrides: Partial<DiscoursePluginConfigInput> = {})
   },
 });
 
-export const createRuntime = () =>
-  createLocalPluginRuntime(
+export const createRuntime = () => {
+  const runtime = createLocalPluginRuntime(
     {
       registry: TEST_REGISTRY,
       secrets: { DISCOURSE_API_KEY: "test-api-key" },
     },
     TEST_PLUGIN_MAP
   );
+  const initializedPlugins: Array<Awaited<ReturnType<typeof runtime.usePlugin>>["initialized"]> =
+    [];
+
+  const originalUsePlugin = runtime.usePlugin.bind(runtime);
+  runtime.usePlugin = async (...args) => {
+    const result = await originalUsePlugin(...args);
+    initializedPlugins.push(result.initialized);
+    return result;
+  };
+
+  const originalShutdown = runtime.shutdown.bind(runtime);
+  runtime.shutdown = async () => {
+    const tracked = initializedPlugins.splice(0, initializedPlugins.length);
+    for (const entry of tracked) {
+      try {
+        if (entry.plugin?.shutdown) {
+          await Effect.runPromise(entry.plugin.shutdown());
+        } else {
+          await Effect.runPromise(interruptCleanupFiber(entry.context.cleanupFiber));
+        }
+      } catch {
+        // Best-effort cleanup; ignore shutdown errors here to preserve test flow
+      }
+    }
+    return originalShutdown();
+  };
+
+  return runtime;
+};
 
 export type Runtime = ReturnType<typeof createRuntime>;
 
