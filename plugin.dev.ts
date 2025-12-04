@@ -1,11 +1,9 @@
-import type { PluginConfigInput } from "every-plugin";
-import discoursePlugin from "./src/index";
-
 const port = Number(process.env.PLUGIN_PORT ?? 3014);
 
-const config: PluginConfigInput<typeof discoursePlugin> = {
+const config = {
   variables: {
-    discourseBaseUrl: process.env.DISCOURSE_BASE_URL ?? "https://discuss.example.com",
+    discourseBaseUrl:
+      process.env.DISCOURSE_BASE_URL ?? "https://discuss.example.com",
     discourseApiUsername: process.env.DISCOURSE_API_USERNAME ?? "system",
     clientId: process.env.DISCOURSE_CLIENT_ID ?? "discourse-plugin",
     requestTimeoutMs: 30_000,

@@ -61,8 +61,19 @@ export const createRateLimiter = (params: {
     if (!bucket) {
       if (maxBuckets) {
         while (buckets.size >= maxBuckets) {
-          const oldestKey = buckets.keys().next().value!;
-          buckets.delete(oldestKey);
+          let stalestKey: string | undefined;
+          let stalestRefill = Number.POSITIVE_INFINITY;
+          for (const [existingKey, existingBucket] of buckets.entries()) {
+            if (existingBucket.lastRefill < stalestRefill) {
+              stalestRefill = existingBucket.lastRefill;
+              stalestKey = existingKey;
+            }
+          }
+          if (stalestKey) {
+            buckets.delete(stalestKey);
+          } else {
+            break;
+          }
         }
       }
       bucket = { tokens: capacity, lastRefill: Date.now() };

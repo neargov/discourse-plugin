@@ -49,6 +49,9 @@
     "vitest": "^3.2.4",
     "zephyr-rspack-plugin": "^0.0.59"
   },
+  "overrides": {
+    "@orpc/*": "1.10.0"
+  },
   "scripts": {
     "build": "rspack build && tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.build.json --noEmit",

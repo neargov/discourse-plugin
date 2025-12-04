@@ -63,6 +63,24 @@ describe("router helpers", () => {
     expect(take).toHaveBeenCalledWith("do-thing", "alice");
   });
 
+  it("prefers explicit rate limit key overrides when provided", async () => {
+    const take = vi.fn().mockReturnValue({ allowed: true, retryAfterMs: 0 });
+    const helpers = createRouterHelpers({
+      ...makeContext(),
+      rateLimiter: { take } as any,
+    });
+
+    const handler = helpers.wrapRoute({
+      action: "custom-key-action",
+      handler: async () => ({ value: 1 }),
+      rateLimitKey: () => "explicit-key",
+    });
+
+    await handler({ input: { username: "alice" }, errors: {} as any });
+
+    expect(take).toHaveBeenCalledWith("custom-key-action", "explicit-key");
+  });
+
   it("caches results via withCache", async () => {
     const helpers = createRouterHelpers(makeContext());
     const fetch = vi.fn().mockResolvedValue(99);

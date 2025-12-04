@@ -881,7 +881,7 @@ describe("rate limiting and caching helpers", () => {
     expect(take).toHaveBeenCalledWith("client-action", "client-123");
   });
 
-  it("ignores userApiKey for rate limit keys and logging", async () => {
+  it("falls back to hashed userApiKey for rate limit keys without logging secrets", async () => {
     const warn = vi.fn();
     const take = vi.fn().mockReturnValue({ allowed: false, retryAfterMs: 75 });
     const context = {
@@ -913,10 +913,12 @@ describe("rate limiting and caching helpers", () => {
       } as any)
     ).rejects.toThrow("limited");
 
-    expect(take).toHaveBeenCalledWith("user-api-action", undefined);
+    const calledWith = take.mock.calls[0]?.[1] as string | undefined;
+    expect(calledWith).toMatch(/^userApiKey:/);
+    expect(calledWith).not.toContain("super-secret-key");
     expect(warn).toHaveBeenCalledWith("Rate limit exceeded", {
       action: "user-api-action",
-      rateLimitKey: undefined,
+      rateLimitKey: calledWith,
       retryAfterMs: 75,
     });
     expect(warn.mock.calls[0]?.[1]).not.toHaveProperty("userApiKey");

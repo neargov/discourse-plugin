@@ -1,4 +1,5 @@
 import { Effect } from "every-plugin/effect";
+import { createHash } from "crypto";
 import { DEFAULT_BODY_SNIPPET_LENGTH } from "./constants";
 import type { DiscoursePluginConfig } from "./plugin-config";
 import { mapPluginError, sanitizeErrorForLog, type PluginErrorConstructors } from "./plugin-errors";
@@ -302,13 +303,26 @@ export const createRouterHelpers = (context: RouterHelperContext): RouterHelpers
     prefixes.forEach((prefix) => deleteByPrefix(prefix));
   };
 
+  const hashKey = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+
   const resolveRateLimitKey = (input: unknown): string | undefined => {
     if (!input || typeof input !== "object") return undefined;
     const maybeString = (value: unknown) =>
       typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-    const candidate =
-      maybeString((input as any).username) ?? maybeString((input as any).clientId);
-    return candidate;
+
+    const clientId = maybeString((input as any).clientId);
+    if (clientId) return clientId;
+
+    const userApiKey = maybeString((input as any).userApiKey);
+    if (userApiKey) {
+      return `userApiKey:${hashKey(userApiKey)}`;
+    }
+
+    const username = maybeString((input as any).username);
+    if (username) return username;
+
+    return undefined;
   };
 
   const wrapRoute: WrapRoute =
@@ -320,7 +334,9 @@ export const createRouterHelpers = (context: RouterHelperContext): RouterHelpers
       logMeta,
     }: {
       action: string;
-      handler: (ctx: { input: I; errors: PluginErrorConstructors }) => Promise<O>;
+      handler: (
+        ctx: { input: I; errors: PluginErrorConstructors }
+      ) => Promise<O> | Effect.Effect<O, any, never>;
       cacheKey?: string | ((input: I) => string | undefined);
       rateLimitKey?: (input: I) => string | undefined;
       logMeta?: (input: I) => Record<string, unknown>;

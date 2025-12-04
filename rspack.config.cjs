@@ -33,6 +33,14 @@ module.exports = withZephyr({
     devMiddleware: {
       writeToDisk: true,
     },
+    setupMiddlewares: (middlewares, devServer) => {
+      if (devServer?.app) {
+        const blockManifest = (_req, res) => res.sendStatus(404);
+        devServer.app.get("/remoteEntry.js/mf-manifest.json", blockManifest);
+        devServer.app.head("/remoteEntry.js/mf-manifest.json", blockManifest);
+      }
+      return middlewares;
+    },
   },
   module: {
     rules: [

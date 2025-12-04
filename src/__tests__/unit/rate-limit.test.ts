@@ -20,6 +20,14 @@ describe("rate limiter", () => {
     expect(limiter.take("action", "a").allowed).toBe(false);
   });
 
+  it("isolates buckets by action and client for perActionClient strategy", () => {
+    const limiter = createRateLimiter({ requestsPerSecond: 1, strategy: "perActionClient" });
+
+    expect(limiter.take("read", "client-1").allowed).toBe(true);
+    expect(limiter.take("write", "client-1").allowed).toBe(true);
+    expect(limiter.take("read", "client-1").allowed).toBe(false);
+  });
+
   it("evicts oldest buckets when maxBuckets is reached", () => {
     const limiter = createRateLimiter({
       requestsPerSecond: 1,
@@ -33,6 +41,32 @@ describe("rate limiter", () => {
 
     const reused = limiter.take("action", "first");
     expect(reused.allowed).toBe(true);
+  });
+
+  it("evicts the stalest bucket instead of the most recently used", () => {
+    const originalNow = Date.now;
+    let now = 0;
+    Date.now = () => now;
+
+    const limiter = createRateLimiter({
+      requestsPerSecond: 1,
+      strategy: "perClient",
+      maxBuckets: 2,
+    });
+
+    limiter.take("action", "first"); // first bucket at t0
+    now = 10;
+    limiter.take("action", "second"); // second bucket at t10
+    now = 20;
+    limiter.take("action", "first"); // refresh first bucket recency at t20
+    now = 30;
+    limiter.take("action", "third"); // should evict "second" as stalest
+    now = 40;
+    const reused = limiter.take("action", "second");
+
+    expect(reused.allowed).toBe(true);
+
+    Date.now = originalNow;
   });
 
   it("falls back to default TTL when bucketTtlMs is invalid", () => {
