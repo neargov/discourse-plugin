@@ -5,10 +5,12 @@ import { runWithContext } from "../client";
 import { normalizePermissions, parseWithSchemaOrThrow } from "./shared";
 
 export const RawTagSchema = z.object({
-  id: z.number(),
+  id: z.union([z.number(), z.string()]),
   name: z.string(),
   topic_count: z.number().default(0),
   pm_topic_count: z.number().default(0),
+  count: z.number().optional(),
+  pm_only: z.boolean().optional(),
   synonyms: z.array(z.string()).default([]),
   target_tag: z.string().nullable().default(null),
   description: z.string().nullable().default(null),
@@ -31,15 +33,27 @@ export const mapTag = (tag: any): Tag => {
     "Tag",
     "Malformed tag response"
   );
+  const id = typeof parsed.id === "number" ? parsed.id : hashStringToNumber(parsed.id);
+  const topicCount = parsed.topic_count ?? parsed.count ?? 0;
+
   return {
-    id: parsed.id,
+    id,
     name: parsed.name,
-    topicCount: parsed.topic_count,
-    pmTopicCount: parsed.pm_topic_count,
+    topicCount,
+    pmTopicCount: parsed.pm_topic_count ?? 0,
     synonyms: parsed.synonyms,
     targetTag: parsed.target_tag,
     description: parsed.description,
   };
+};
+
+const hashStringToNumber = (str: string): number => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return Math.abs(hash) || 1;
 };
 
 export const mapTagGroup = (group: any): TagGroup => {
