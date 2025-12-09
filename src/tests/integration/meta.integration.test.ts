@@ -8,7 +8,7 @@ import {
   validTagPayload,
   validTopicPayload,
   validUserPayload,
-} from "../../tests/fixtures";
+} from "../fixtures";
 import { setupIntegrationTest, TEST_CONFIG } from "./helpers";
 
 const ctx = setupIntegrationTest();
@@ -30,8 +30,8 @@ describe("meta and content flows", () => {
               key.toLowerCase() === "content-length"
                 ? "0"
                 : key.toLowerCase() === "retry-after"
-                  ? "0.01"
-                  : null,
+                ? "0.01"
+                : null,
           },
           text: async () => "",
         })
@@ -42,10 +42,11 @@ describe("meta and content flows", () => {
               key.toLowerCase() === "content-type"
                 ? "application/json"
                 : key.toLowerCase() === "content-length"
-                  ? "2"
-                  : null,
+                ? "2"
+                : null,
           },
-          text: async () => JSON.stringify({ category_list: { categories: [] } }),
+          text: async () =>
+            JSON.stringify({ category_list: { categories: [] } }),
         });
 
       const loggingConfig = {
@@ -66,8 +67,9 @@ describe("meta and content flows", () => {
         loggingConfig
       );
 
-      (initialized.context.discourseService as any).requestLogger = (payload: unknown) =>
-        requestLogs.push(payload);
+      (initialized.context.discourseService as any).requestLogger = (
+        payload: unknown
+      ) => requestLogs.push(payload);
 
       await client.getCategories();
 
@@ -117,8 +119,8 @@ describe("meta and content flows", () => {
               key.toLowerCase() === "retry-after"
                 ? "0.01"
                 : key.toLowerCase() === "content-length"
-                  ? "20"
-                  : null,
+                ? "20"
+                : null,
           },
           text: async () => "rate limited",
         })
@@ -129,8 +131,8 @@ describe("meta and content flows", () => {
               key.toLowerCase() === "content-type"
                 ? "application/json"
                 : key.toLowerCase() === "content-length"
-                  ? "100"
-                  : null,
+                ? "100"
+                : null,
           },
           text: async () =>
             JSON.stringify({
@@ -184,8 +186,8 @@ describe("meta and content flows", () => {
               key.toLowerCase() === "retry-after"
                 ? "0.01"
                 : key.toLowerCase() === "content-length"
-                  ? "18"
-                  : null,
+                ? "18"
+                : null,
           },
           text: async () => "maintenance",
         })
@@ -196,8 +198,8 @@ describe("meta and content flows", () => {
               key.toLowerCase() === "content-type"
                 ? "application/json"
                 : key.toLowerCase() === "content-length"
-                  ? "100"
-                  : null,
+                ? "100"
+                : null,
           },
           text: async () =>
             JSON.stringify({
@@ -1175,7 +1177,9 @@ describe("meta and content flows", () => {
 
       const { client } = await ctx.useClient();
 
-      const result = await client.validateUserApiKey({ userApiKey: "user-key" });
+      const result = await client.validateUserApiKey({
+        userApiKey: "user-key",
+      });
 
       expect(result).toEqual({
         valid: true,
@@ -1196,7 +1200,9 @@ describe("meta and content flows", () => {
 
       const { client } = await ctx.useClient();
 
-      await expect(client.validateUserApiKey({ userApiKey: "user-key" })).rejects.toThrow();
+      await expect(
+        client.validateUserApiKey({ userApiKey: "user-key" })
+      ).rejects.toThrow();
     });
 
     it("maps invalid keys to UNAUTHORIZED", async () => {
@@ -1209,7 +1215,9 @@ describe("meta and content flows", () => {
 
       const { client } = await ctx.useClient();
 
-      await expect(client.validateUserApiKey({ userApiKey: "bad-key" })).rejects.toThrow();
+      await expect(
+        client.validateUserApiKey({ userApiKey: "bad-key" })
+      ).rejects.toThrow();
     });
   });
 });

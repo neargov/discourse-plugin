@@ -58,6 +58,9 @@ export const createRuntime = () => {
   const originalUsePlugin = runtime.usePlugin.bind(runtime);
   runtime.usePlugin = async (...args) => {
     const result = await originalUsePlugin(...args);
+    if (typeof result === "string") {
+      throw new Error(result);
+    }
     initializedPlugins.push(result.initialized);
     return result;
   };
@@ -84,7 +87,15 @@ export const createRuntime = () => {
 
 export type Runtime = ReturnType<typeof createRuntime>;
 
-export const setupIntegrationTest = () => {
+type SetupIntegrationTestReturn = {
+  runtime: Runtime;
+  fetchMock: ReturnType<typeof vi.fn>;
+  useClient: () => ReturnType<Runtime["usePlugin"]>;
+  beforeEach: () => void;
+  afterEach: () => Promise<void>;
+};
+
+export const setupIntegrationTest = (): SetupIntegrationTestReturn => {
   let runtime: Runtime;
   let fetchMock: ReturnType<typeof vi.fn>;
   let originalFetch: typeof fetch;

@@ -16,7 +16,7 @@ import {
   validDirectoryItemPayload,
   validRevisionPayload,
   uploadPayload,
-} from "../../tests/fixtures";
+} from "../fixtures";
 
 type MockResponse = {
   ok: boolean;
@@ -72,12 +72,20 @@ const runAllTimersAwaitable = async () => {
   }
 };
 
-type RunEffect = <A, E = unknown>(eff: Effect.Effect<A, E, never>) => Promise<A>;
+type RunEffect = <A, E = unknown>(
+  eff: Effect.Effect<A, E, never>
+) => Promise<A>;
 const run: RunEffect = (eff) => Effect.runPromise(eff);
 
 const makeErrors = () => {
-  const tooManyRequests = vi.fn((payload: any) => ({ code: "TOO_MANY", payload })) as any;
-  const rateLimited = vi.fn((payload: any) => ({ code: "RATE_LIMITED", payload })) as any;
+  const tooManyRequests = vi.fn((payload: any) => ({
+    code: "TOO_MANY",
+    payload,
+  })) as any;
+  const rateLimited = vi.fn((payload: any) => ({
+    code: "RATE_LIMITED",
+    payload,
+  })) as any;
   const serviceUnavailable = vi.fn((payload: any) => ({
     code: "SERVICE_UNAVAILABLE",
     payload,
@@ -103,7 +111,9 @@ const expectDiscourseApiError = async (
     contextIncludes?: string;
   }
 ): Promise<DiscourseApiErrorType | undefined> => {
-  const extractDiscourseError = (error: unknown): DiscourseApiErrorType | undefined => {
+  const extractDiscourseError = (
+    error: unknown
+  ): DiscourseApiErrorType | undefined => {
     if (error instanceof DiscourseApiError) return error;
     if (error && typeof error === "object") {
       const candidate =
@@ -145,7 +155,9 @@ const expectDiscourseApiError = async (
         expect(String(discError.path)).toContain(expected.pathIncludes);
       }
       if (expected.bodyIncludes) {
-        expect(String(discError.bodySnippet ?? "")).toContain(expected.bodyIncludes);
+        expect(String(discError.bodySnippet ?? "")).toContain(
+          expected.bodyIncludes
+        );
       }
       if (expected.contextIncludes) {
         expect(String(discError.message)).toContain(expected.contextIncludes);
@@ -227,7 +239,8 @@ describe("mapDiscourseApiError", () => {
 
       const result = mapDiscourseApiError(error, errors);
       const lastResult =
-        handlers[hook].mock.results[handlers[hook].mock.results.length - 1]?.value;
+        handlers[hook].mock.results[handlers[hook].mock.results.length - 1]
+          ?.value;
       expect(result).toBe(lastResult);
       expect(handlers[hook]).toHaveBeenLastCalledWith({
         message: error.message,
@@ -558,7 +571,11 @@ describe("createDiscourseDeps", () => {
     };
 
     const metrics = { retryAttempts: 0, nonceEvictions: 0 };
-    const { nonceManager } = createDiscourseDeps(config as any, logger as any, metrics);
+    const { nonceManager } = createDiscourseDeps(
+      config as any,
+      logger as any,
+      metrics
+    );
 
     nonceManager.create("client-a", "pk1");
     nonceManager.create("client-b", "pk2");
@@ -597,7 +614,11 @@ describe("createDiscourseDeps", () => {
     };
 
     const metrics = { retryAttempts: 0, nonceEvictions: 0 };
-    const { discourseService } = createDiscourseDeps(config as any, logger as any, metrics);
+    const { discourseService } = createDiscourseDeps(
+      config as any,
+      logger as any,
+      metrics
+    );
 
     const writePolicy = (discourseService as any).resolveRetryPolicy("POST");
     const readPolicy = (discourseService as any).resolveRetryPolicy("GET");
@@ -633,7 +654,9 @@ describe(
           })
         );
 
-        expect(result).toContain("https://discuss.example.com/user-api-key/new");
+        expect(result).toContain(
+          "https://discuss.example.com/user-api-key/new"
+        );
         expect(result).toContain("client_id=test-client");
         expect(result).toContain("application_name=Test%20App");
         expect(result).toContain("nonce=test-nonce");
@@ -694,9 +717,9 @@ describe(
       });
 
       it("should reject invalid base URLs early", () => {
-        expect(
-          () => new DiscourseService("not-a-url", "k", "user")
-        ).toThrow("Invalid Discourse base URL");
+        expect(() => new DiscourseService("not-a-url", "k", "user")).toThrow(
+          "Invalid Discourse base URL"
+        );
       });
     });
 
@@ -742,7 +765,9 @@ describe(
       });
 
       it("logs a warning and returns false when all probes fail", async () => {
-        const fetchApiSpy = vi.spyOn(service as any, "fetchApi").mockRejectedValue(new Error("boom"));
+        const fetchApiSpy = vi
+          .spyOn(service as any, "fetchApi")
+          .mockRejectedValue(new Error("boom"));
         const warn = vi.fn();
         const debug = vi.fn();
         const originalLogger = (service as any).logger;
@@ -890,7 +915,7 @@ describe(
               get: (key: string) =>
                 key === "content-type" ? "application/json" : null,
             },
-            text: async () => "{\"ok\":true}",
+            text: async () => '{"ok":true}',
           })
         );
 
@@ -984,16 +1009,22 @@ describe(
         const sentHeaders = (options as any)?.headers ?? {};
 
         expect(
-          Object.keys(sentHeaders).filter((key) => key.toLowerCase() === "accept")
+          Object.keys(sentHeaders).filter(
+            (key) => key.toLowerCase() === "accept"
+          )
         ).toHaveLength(1);
         expect(sentHeaders.ACCEPT).toBe("text/custom");
         expect(sentHeaders["USER-API-KEY"]).toBe("from-header");
         expect(sentHeaders["User-Api-Client-Id"]).toBe("test-client");
         expect(
-          Object.keys(sentHeaders).some((key) => key.toLowerCase() === "api-key")
+          Object.keys(sentHeaders).some(
+            (key) => key.toLowerCase() === "api-key"
+          )
         ).toBe(false);
         expect(
-          Object.keys(sentHeaders).filter((key) => key.toLowerCase() === "content-type")
+          Object.keys(sentHeaders).filter(
+            (key) => key.toLowerCase() === "content-type"
+          )
         ).toHaveLength(1);
         expect(sentHeaders["content-type"] ?? sentHeaders["Content-Type"]).toBe(
           "application/custom"
@@ -1020,7 +1051,9 @@ describe(
         expect(sentHeaders["User-Api-Key"]).toBe("header-key");
         expect(sentHeaders["User-Api-Client-Id"]).toBe("test-client");
         expect(
-          Object.keys(sentHeaders).some((key) => key.toLowerCase() === "api-key")
+          Object.keys(sentHeaders).some(
+            (key) => key.toLowerCase() === "api-key"
+          )
         ).toBe(false);
       });
 
@@ -1176,7 +1209,7 @@ describe(
               get: (key: string) =>
                 key === "content-type" ? "application/json" : null,
             },
-            text: async () => "{\"ok\":true}",
+            text: async () => '{"ok":true}',
           })
         );
 
@@ -1194,7 +1227,7 @@ describe(
               get: (key: string) =>
                 key === "content-type" ? "application/json" : null,
             },
-            text: async () => "{\"ok\":true}",
+            text: async () => '{"ok":true}',
           })
         );
 
@@ -1243,7 +1276,7 @@ describe(
               get: (key: string) =>
                 key === "content-type" ? "application/problem+json" : null,
             },
-            text: async () => "{\"problem\":\"details\"}",
+            text: async () => '{"problem":"details"}',
           })
         );
 
@@ -1264,7 +1297,9 @@ describe(
           })
         );
 
-        await expect(callFetch()).rejects.toThrow("Failed to read response body: boom reading body");
+        await expect(callFetch()).rejects.toThrow(
+          "Failed to read response body: boom reading body"
+        );
       });
 
       it("returns undefined when text is only whitespace", async () => {
@@ -1333,7 +1368,9 @@ describe(
       it("surfaces JSON parse errors with short bodies without truncation", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            headers: { get: (key: string) => (key ? "application/json" : null) },
+            headers: {
+              get: (key: string) => (key ? "application/json" : null),
+            },
             text: async () => "{oops",
           })
         );
@@ -1348,7 +1385,8 @@ describe(
         fetchMock.mockResolvedValueOnce(
           makeRes({
             headers: {
-              get: (key: string) => (key === "content-type" ? "application/json" : null),
+              get: (key: string) =>
+                key === "content-type" ? "application/json" : null,
             },
             text: async () => veryLong,
           })
@@ -1416,15 +1454,12 @@ describe(
           })
         );
 
-        await expectDiscourseApiError(
-          () => noisyService.fetchApi("/fail"),
-          {
-            status: 500,
-            method: "GET",
-            pathIncludes: "/fail",
-            bodyIncludes: "err",
-          }
-        );
+        await expectDiscourseApiError(() => noisyService.fetchApi("/fail"), {
+          status: 500,
+          method: "GET",
+          pathIncludes: "/fail",
+          bodyIncludes: "err",
+        });
       });
 
       it("still surfaces status when response body cannot be read", async () => {
@@ -1438,15 +1473,12 @@ describe(
           })
         );
 
-        await expectDiscourseApiError(
-          () => callFetch("/unreadable"),
-          {
-            status: 503,
-            method: "GET",
-            pathIncludes: "/unreadable",
-            bodyIncludes: "[body unavailable: unreadable]",
-          }
-        );
+        await expectDiscourseApiError(() => callFetch("/unreadable"), {
+          status: 503,
+          method: "GET",
+          pathIncludes: "/unreadable",
+          bodyIncludes: "[body unavailable: unreadable]",
+        });
       });
 
       it("omits body snippet when error text is blank", async () => {
@@ -1611,7 +1643,9 @@ describe(
         );
 
         expect(error?.requestId).toBe("abc-123");
-        expect(error?.message).toContain("https://discuss.example.com/with-request-id");
+        expect(error?.message).toContain(
+          "https://discuss.example.com/with-request-id"
+        );
       });
 
       it("handles missing header getters on error responses", async () => {
@@ -1641,7 +1675,9 @@ describe(
       it("prefers a provided fetch implementation over global fetch", async () => {
         const customFetch = vi.fn().mockResolvedValue(
           makeRes({
-            headers: { get: (key: string) => (key === "content-length" ? "0" : null) },
+            headers: {
+              get: (key: string) => (key === "content-length" ? "0" : null),
+            },
             text: async () => "",
           })
         );
@@ -1672,7 +1708,9 @@ describe(
 
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            headers: { get: (key: string) => (key === "content-length" ? "0" : null) },
+            headers: {
+              get: (key: string) => (key === "content-length" ? "0" : null),
+            },
             text: async () => "",
           })
         );
@@ -1703,12 +1741,16 @@ describe(
 
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            headers: { get: (key: string) => (key === "content-length" ? "0" : null) },
+            headers: {
+              get: (key: string) => (key === "content-length" ? "0" : null),
+            },
             text: async () => "",
           })
         );
 
-        await expect(loggingService.fetchApi("/log-hook-fail")).resolves.toBeUndefined();
+        await expect(
+          loggingService.fetchApi("/log-hook-fail")
+        ).resolves.toBeUndefined();
       });
 
       it("uses configured body snippet length when logging errors", async () => {
@@ -1756,7 +1798,10 @@ describe(
       it("falls back to jittered backoff when retry-after is absent", () => {
         const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.75);
 
-        const delay = (service as any).computeDelayMs(new Error("no-retry-after"), 2);
+        const delay = (service as any).computeDelayMs(
+          new Error("no-retry-after"),
+          2
+        );
 
         expect(delay).toBe(1100);
         randomSpy.mockRestore();
@@ -1793,18 +1838,18 @@ describe(
               maxRetries: -1,
               baseDelayMs: Number.NaN,
               maxDelayMs: -5,
-            jitterRatio: -0.5,
-          },
-        }
-      ) as any;
+              jitterRatio: -0.5,
+            },
+          }
+        ) as any;
 
-      expect(policyService.retryPolicy).toEqual({
-        maxRetries: 0,
-        baseDelayMs: 250,
-        maxDelayMs: 5000,
-        jitterRatio: 0.2,
+        expect(policyService.retryPolicy).toEqual({
+          maxRetries: 0,
+          baseDelayMs: 250,
+          maxDelayMs: 5000,
+          jitterRatio: 0.2,
+        });
       });
-    });
 
       it("relies on the transport retry loop and request logging", async () => {
         vi.useFakeTimers();
@@ -1834,16 +1879,23 @@ describe(
             "system",
             noopLogger,
             {
-              retryPolicy: { maxRetries: 1, baseDelayMs: 1000, maxDelayMs: 2000, jitterRatio: 0 },
+              retryPolicy: {
+                maxRetries: 1,
+                baseDelayMs: 1000,
+                maxDelayMs: 2000,
+                jitterRatio: 0,
+              },
               requestLogger,
               fetchImpl: fetchImpl as any,
             }
           );
 
-      const resultPromise = retryService.fetchApi("/retry", { method: "GET" });
+          const resultPromise = retryService.fetchApi("/retry", {
+            method: "GET",
+          });
 
-      await runAllTimersAwaitable();
-      const result = await resultPromise;
+          await runAllTimersAwaitable();
+          const result = await resultPromise;
 
           expect(result).toEqual({});
           expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -1889,7 +1941,10 @@ describe(
           { retryPolicy: { maxRetries: 0, baseDelayMs: 100, maxDelayMs: 1000 } }
         ) as any;
 
-        const merged = retryService.resolveRetryPolicy("POST", { maxRetries: 2, baseDelayMs: 50 });
+        const merged = retryService.resolveRetryPolicy("POST", {
+          maxRetries: 2,
+          baseDelayMs: 50,
+        });
 
         expect(merged.maxRetries).toBe(2);
         expect(merged.baseDelayMs).toBe(50);
@@ -1904,7 +1959,10 @@ describe(
           noopLogger,
           {
             retryPolicy: { maxRetries: 0 },
-            operationRetryPolicy: { reads: { maxRetries: 0 }, writes: { maxRetries: 1 } },
+            operationRetryPolicy: {
+              reads: { maxRetries: 0 },
+              writes: { maxRetries: 1 },
+            },
           }
         ) as any;
 
@@ -1924,7 +1982,9 @@ describe(
           "system"
         );
 
-        expect(slashService.getNormalizedBaseUrl()).toBe("https://discuss.example.com");
+        expect(slashService.getNormalizedBaseUrl()).toBe(
+          "https://discuss.example.com"
+        );
         expect(slashService.resolvePath("/t/topic/1")).toBe(
           "https://discuss.example.com/t/topic/1"
         );
@@ -1962,7 +2022,10 @@ describe(
       });
 
       it("prefers user API credentials and client id when provided", () => {
-        const payload = uploadPayload({ username: "bob", userApiKey: "user-key" });
+        const payload = uploadPayload({
+          username: "bob",
+          userApiKey: "user-key",
+        });
         const request = service.buildUploadRequest({
           uploadType: payload.uploadType,
           username: payload.username,
@@ -2033,7 +2096,11 @@ describe(
               key: payload.key,
               unique_identifier: payload.uniqueIdentifier,
               presigned_urls: [
-                { part_number: 1, url: "https://upload/part1", headers: { A: "b" } },
+                {
+                  part_number: 1,
+                  url: "https://upload/part1",
+                  headers: { A: "b" },
+                },
               ],
             }),
           })
@@ -2092,7 +2159,7 @@ describe(
 
         const [, options] = fetchMock.mock.calls[0];
         expect((options as any)?.method).toBe("POST");
-        expect(String((options as any)?.body)).toContain("\"file_size\":123");
+        expect(String((options as any)?.body)).toContain('"file_size":123');
 
         expect(result).toEqual({
           method: "PUT",
@@ -2127,7 +2194,9 @@ describe(
       });
 
       it("normalizes empty header inputs to an empty object", () => {
-        const normalized = (service as any).normalizeHeaderValues(undefined as any);
+        const normalized = (service as any).normalizeHeaderValues(
+          undefined as any
+        );
 
         expect(normalized).toEqual({});
       });
@@ -2210,7 +2279,9 @@ describe(
           uploadId: "upload-1",
           key: "uploads/key",
           uniqueIdentifier: "abc",
-          parts: [{ partNumber: 1, url: "https://upload/part1", headers: { A: "b" } }],
+          parts: [
+            { partNumber: 1, url: "https://upload/part1", headers: { A: "b" } },
+          ],
         });
 
         const retryingService = new DiscourseService(
@@ -2579,7 +2650,9 @@ describe(
       it("returns false when abort response body is empty text", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            headers: { get: (key: string) => (key === "content-length" ? "0" : null) },
+            headers: {
+              get: (key: string) => (key === "content-length" ? "0" : null),
+            },
             text: async () => "",
           })
         );
@@ -2810,7 +2883,11 @@ describe(
       it("performs a like action with mapping and perform mode defaults", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            json: async () => ({ id: 123, post_action_type_id: 2, success: "OK" }),
+            json: async () => ({
+              id: 123,
+              post_action_type_id: 2,
+              success: "OK",
+            }),
           })
         );
 
@@ -2869,7 +2946,11 @@ describe(
       it("flags a topic when flag mode is provided", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            json: async () => ({ id: 321, post_action_type_id: 3, success: true }),
+            json: async () => ({
+              id: 321,
+              post_action_type_id: 3,
+              success: true,
+            }),
           })
         );
 
@@ -2903,7 +2984,11 @@ describe(
       it("sends take_action when requested via flag mode resolution", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            json: async () => ({ id: 222, post_action_type_id: 4, success: true }),
+            json: async () => ({
+              id: 222,
+              post_action_type_id: 4,
+              success: true,
+            }),
           })
         );
 
@@ -3083,7 +3168,10 @@ describe(
       });
 
       it("maps action names to post action type ids", () => {
-        const resolved = (service as any).resolvePostActionType("flag_spam", undefined);
+        const resolved = (service as any).resolvePostActionType(
+          "flag_spam",
+          undefined
+        );
         expect(resolved).toBe(5);
       });
 
@@ -3104,8 +3192,12 @@ describe(
     describe("topic administration", () => {
       it("updates topic status and surfaces empty topic responses", async () => {
         fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
-          .mockResolvedValueOnce(makeRes({ json: async () => validTopicPayload({ id: 10 }) }));
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => ({ success: true }) })
+          )
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => validTopicPayload({ id: 10 }) })
+          );
 
         const result = await run(
           service.updateTopicStatus({
@@ -3119,7 +3211,9 @@ describe(
         expect(result.topic.id).toBe(10);
 
         fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => ({ success: true }) })
+          )
           .mockResolvedValueOnce(makeRes({ json: async () => null }));
 
         await expect(
@@ -3136,9 +3230,14 @@ describe(
 
       it("updates topic metadata", async () => {
         fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
           .mockResolvedValueOnce(
-            makeRes({ json: async () => validTopicPayload({ id: 20, title: "Valid topic" }) })
+            makeRes({ json: async () => ({ success: true }) })
+          )
+          .mockResolvedValueOnce(
+            makeRes({
+              json: async () =>
+                validTopicPayload({ id: 20, title: "Valid topic" }),
+            })
           );
 
         const result = await run(
@@ -3161,7 +3260,9 @@ describe(
 
       it("throws when topic metadata response is empty", async () => {
         fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => ({ success: true }) })
+          )
           .mockResolvedValueOnce(emptyRes());
 
         await expect(
@@ -3182,7 +3283,9 @@ describe(
               json: async () => ({ bookmark_id: 9 }),
             })
           )
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }));
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => ({ success: true }) })
+          );
 
         const bookmark = await run(
           service.bookmarkTopic({
@@ -3240,8 +3343,12 @@ describe(
               json: async () => ({ notification_level: 4 }),
             })
           )
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
-          .mockResolvedValueOnce(makeRes({ json: async () => validTopicPayload({ id: 44 }) }));
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => ({ success: true }) })
+          )
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => validTopicPayload({ id: 44 }) })
+          );
 
         const notification = await run(
           service.setTopicNotification({
@@ -3293,7 +3400,9 @@ describe(
         );
 
         const [, options] = fetchMock.mock.calls[0];
-        expect(JSON.parse((options as any).body)).toEqual({ notification_level: 2 });
+        expect(JSON.parse((options as any).body)).toEqual({
+          notification_level: 2,
+        });
         expect(notification.notificationLevel).toBe(2);
       });
 
@@ -3319,7 +3428,9 @@ describe(
 
       it("throws when topic timestamp response is empty", async () => {
         fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => ({ success: true }) })
+          )
           .mockResolvedValueOnce(emptyRes());
 
         await expect(
@@ -3522,7 +3633,9 @@ describe(
               username: "moderator",
             })
           )
-        ).rejects.toThrow("Delete revision response missing explicit success flag");
+        ).rejects.toThrow(
+          "Delete revision response missing explicit success flag"
+        );
       });
 
       it("defaults delete revision success when body is empty", async () => {
@@ -3536,7 +3649,9 @@ describe(
               username: "moderator",
             })
           )
-        ).rejects.toThrow("Delete revision response missing explicit success flag");
+        ).rejects.toThrow(
+          "Delete revision response missing explicit success flag"
+        );
       });
 
       it("surfaces errors when revision fetch fails", async () => {
@@ -3588,7 +3703,9 @@ describe(
               includeRaw: true,
             })
           )
-        ).rejects.toThrow("Revision validation failed: raw is required when includeRaw is true");
+        ).rejects.toThrow(
+          "Revision validation failed: raw is required when includeRaw is true"
+        );
       });
 
       it("throws when update revision response is empty", async () => {
@@ -3615,10 +3732,16 @@ describe(
         const category = (service as any).mapCategory(validCategoryPayload());
         expect(category.id).toBe(validCategoryPayload().id);
 
-        const revisionWithRaw = (service as any).mapRevision(validRevisionPayload(), true);
+        const revisionWithRaw = (service as any).mapRevision(
+          validRevisionPayload(),
+          true
+        );
         expect(revisionWithRaw.raw).toBe(validRevisionPayload().raw);
 
-        const revisionWithoutRaw = (service as any).mapRevision(validRevisionPayload(), false);
+        const revisionWithoutRaw = (service as any).mapRevision(
+          validRevisionPayload(),
+          false
+        );
         expect(revisionWithoutRaw.raw).toBeUndefined();
       });
     });
@@ -3981,8 +4104,12 @@ describe(
     describe("content retrieval", () => {
       it("should fetch a single post with topic", async () => {
         fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => validPostPayload() }))
-          .mockResolvedValueOnce(makeRes({ json: async () => validTopicPayload() }));
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => validPostPayload() })
+          )
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => validTopicPayload() })
+          );
 
         const result = await run(service.getPost(5, true));
 
@@ -4022,7 +4149,9 @@ describe(
               }),
             })
           )
-          .mockResolvedValueOnce(makeRes({ json: async () => validTopicPayload({ id: 25 }) }));
+          .mockResolvedValueOnce(
+            makeRes({ json: async () => validTopicPayload({ id: 25 }) })
+          );
 
         const result = await run(service.getPost(15, false));
 
@@ -4245,7 +4374,13 @@ describe(
           makeRes({
             json: async () => ({
               topic_list: {
-                topics: [validTopicPayload({ id: 7, title: "No Page", slug: "no-page" })],
+                topics: [
+                  validTopicPayload({
+                    id: 7,
+                    title: "No Page",
+                    slug: "no-page",
+                  }),
+                ],
                 more_topics_url: null,
               },
             }),
@@ -4281,7 +4416,11 @@ describe(
 
         await expect(
           run(
-            service.getLatestTopics({ categoryId: 3, page: 2, order: "activity" })
+            service.getLatestTopics({
+              categoryId: 3,
+              page: 2,
+              order: "activity",
+            })
           )
         ).rejects.toThrow("Get latest topics failed: Malformed topic response");
       });
@@ -4320,7 +4459,13 @@ describe(
           makeRes({
             json: async () => ({
               topic_list: {
-                topics: [validTopicPayload({ id: 42, title: "Ordered", slug: "ordered" })],
+                topics: [
+                  validTopicPayload({
+                    id: 42,
+                    title: "Ordered",
+                    slug: "ordered",
+                  }),
+                ],
                 more_topics_url: "/more-ordered",
               },
             }),
@@ -4389,7 +4534,9 @@ describe(
           })
         );
 
-        const result = await run(service.getTopicList({ type: "latest", page: 0 }));
+        const result = await run(
+          service.getTopicList({ type: "latest", page: 0 })
+        );
 
         expect(fetchMock).toHaveBeenCalledWith(
           "https://discuss.example.com/latest.json",
@@ -4452,7 +4599,12 @@ describe(
         );
 
         const result = await run(
-          service.getTopicList({ type: "top", categoryId: 8, page: 2, period: "weekly" })
+          service.getTopicList({
+            type: "top",
+            categoryId: 8,
+            page: 2,
+            period: "weekly",
+          })
         );
 
         expect(fetchMock).toHaveBeenCalledWith(
@@ -4484,7 +4636,11 @@ describe(
         );
 
         const result = await run(
-          service.getCategoryTopics({ slug: "general", categoryId: 12, page: 1 })
+          service.getCategoryTopics({
+            slug: "general",
+            categoryId: 12,
+            page: 1,
+          })
         );
 
         expect(fetchMock).toHaveBeenCalledWith(
@@ -4516,7 +4672,11 @@ describe(
         );
 
         const result = await run(
-          service.getCategoryTopics({ slug: "general", categoryId: 12, page: 0 })
+          service.getCategoryTopics({
+            slug: "general",
+            categoryId: 12,
+            page: 0,
+          })
         );
 
         expect(fetchMock).toHaveBeenCalledWith(
@@ -4593,7 +4753,13 @@ describe(
           makeRes({
             json: async () => ({
               topic_list: {
-                topics: [validTopicPayload({ id: 11, title: "Paged Top", slug: "paged-top" })],
+                topics: [
+                  validTopicPayload({
+                    id: 11,
+                    title: "Paged Top",
+                    slug: "paged-top",
+                  }),
+                ],
                 more_topics_url: null,
               },
             }),
@@ -4680,7 +4846,13 @@ describe(
           makeRes({
             json: async () => ({
               topic_list: {
-                topics: [validTopicPayload({ id: 13, title: "Cat Default", slug: "cat-default" })],
+                topics: [
+                  validTopicPayload({
+                    id: 13,
+                    title: "Cat Default",
+                    slug: "cat-default",
+                  }),
+                ],
                 more_topics_url: null,
               },
             }),
@@ -4703,7 +4875,13 @@ describe(
           makeRes({
             json: async () => ({
               topic_list: {
-                topics: [validTopicPayload({ id: 22, title: "Ordered Latest", slug: "ordered" })],
+                topics: [
+                  validTopicPayload({
+                    id: 22,
+                    title: "Ordered Latest",
+                    slug: "ordered",
+                  }),
+                ],
                 more_topics_url: null,
               },
             }),
@@ -4723,7 +4901,9 @@ describe(
 
       it("mapTopic should supply defaults for missing optional fields", async () => {
         fetchMock.mockResolvedValueOnce(
-          makeRes({ json: async () => ({ id: 55, title: "Minimal", slug: "min" }) })
+          makeRes({
+            json: async () => ({ id: 55, title: "Minimal", slug: "min" }),
+          })
         );
 
         const result = await run(service.getTopic(55));
@@ -4748,7 +4928,12 @@ describe(
       it("mapTopic should supply defaults when optional fields missing but created_at present", async () => {
         fetchMock.mockResolvedValueOnce(
           makeRes({
-            json: async () => ({ id: 56, title: "Minimal", slug: "min", created_at: "2024-01-01" }),
+            json: async () => ({
+              id: 56,
+              title: "Minimal",
+              slug: "min",
+              created_at: "2024-01-01",
+            }),
           })
         );
 
@@ -4774,7 +4959,9 @@ describe(
       it("mapPost should require raw when includeRaw is true", () => {
         const mapper = (service as any).mapPost.bind(service);
 
-        expect(() => mapper(validPostPayload({ raw: undefined }), true)).toThrow(
+        expect(() =>
+          mapper(validPostPayload({ raw: undefined }), true)
+        ).toThrow(
           "Post validation failed: raw is required when includeRaw is true"
         );
       });
@@ -4784,16 +4971,13 @@ describe(
           makeRes({ ok: false, status: 500, text: async () => "boom" })
         );
 
-        await expectDiscourseApiError(
-          () => run(service.getPost(99, false)),
-          {
-            status: 500,
-            method: "GET",
-            pathIncludes: "/posts/99.json",
-            bodyIncludes: "boom",
-            contextIncludes: "Get post failed",
-          }
-        );
+        await expectDiscourseApiError(() => run(service.getPost(99, false)), {
+          status: 500,
+          method: "GET",
+          pathIncludes: "/posts/99.json",
+          bodyIncludes: "boom",
+          contextIncludes: "Get post failed",
+        });
       });
 
       it("should surface errors when replies fetch fails", async () => {
@@ -4801,16 +4985,13 @@ describe(
           makeRes({ ok: false, status: 404, text: async () => "not found" })
         );
 
-        await expectDiscourseApiError(
-          () => run(service.getPostReplies(999)),
-          {
-            status: 404,
-            method: "GET",
-            pathIncludes: "/posts/999/replies.json",
-            bodyIncludes: "not found",
-            contextIncludes: "Get post replies failed",
-          }
-        );
+        await expectDiscourseApiError(() => run(service.getPostReplies(999)), {
+          status: 404,
+          method: "GET",
+          pathIncludes: "/posts/999/replies.json",
+          bodyIncludes: "not found",
+          contextIncludes: "Get post replies failed",
+        });
       });
 
       it("should surface errors when getTopic fetch rejects", async () => {
@@ -4844,7 +5025,10 @@ describe(
         );
 
         await expectDiscourseApiError(
-          () => run(service.getTopTopics({ period: "weekly", categoryId: 1, page: 1 })),
+          () =>
+            run(
+              service.getTopTopics({ period: "weekly", categoryId: 1, page: 1 })
+            ),
           {
             status: 500,
             method: "GET",
@@ -4924,7 +5108,9 @@ describe(
         fetchMock.mockResolvedValueOnce(
           makeRes({
             json: async () => ({
-              category_list: { categories: [{ name: "General", slug: "general" }] },
+              category_list: {
+                categories: [{ name: "General", slug: "general" }],
+              },
             }),
           })
         );
@@ -4945,16 +5131,13 @@ describe(
           makeRes({ ok: false, status: 503, text: async () => "unavailable" })
         );
 
-        await expectDiscourseApiError(
-          () => run(service.getCategories()),
-          {
-            status: 503,
-            method: "GET",
-            pathIncludes: "/categories.json",
-            bodyIncludes: "unavailable",
-            contextIncludes: "Get categories failed",
-          }
-        );
+        await expectDiscourseApiError(() => run(service.getCategories()), {
+          status: 503,
+          method: "GET",
+          pathIncludes: "/categories.json",
+          bodyIncludes: "unavailable",
+          contextIncludes: "Get categories failed",
+        });
       });
 
       it("getCategory should throw on empty category response", async () => {
@@ -4969,8 +5152,14 @@ describe(
         fetchMock.mockResolvedValueOnce(
           makeRes({
             json: async () => ({
-              category: validCategoryPayload({ id: 1, slug: "parent", name: "Parent" }),
-              subcategory_list: [validCategoryPayload({ id: 2, slug: "child", name: "Child" })],
+              category: validCategoryPayload({
+                id: 1,
+                slug: "parent",
+                name: "Parent",
+              }),
+              subcategory_list: [
+                validCategoryPayload({ id: 2, slug: "child", name: "Child" }),
+              ],
             }),
           })
         );
@@ -4985,10 +5174,18 @@ describe(
         fetchMock.mockResolvedValueOnce(
           makeRes({
             json: async () => ({
-              category: validCategoryPayload({ id: 1, slug: "parent", name: "Parent" }),
+              category: validCategoryPayload({
+                id: 1,
+                slug: "parent",
+                name: "Parent",
+              }),
               subcategory_list: {
                 categories: [
-                  validCategoryPayload({ id: 3, slug: "grandchild", name: "Grandchild" }),
+                  validCategoryPayload({
+                    id: 3,
+                    slug: "grandchild",
+                    name: "Grandchild",
+                  }),
                 ],
               },
             }),
@@ -5004,7 +5201,11 @@ describe(
         fetchMock.mockResolvedValueOnce(
           makeRes({
             json: async () => ({
-              category: validCategoryPayload({ id: 1, slug: "parent", name: "Parent" }),
+              category: validCategoryPayload({
+                id: 1,
+                slug: "parent",
+                name: "Parent",
+              }),
             }),
           })
         );
@@ -5043,16 +5244,13 @@ describe(
           makeRes({ ok: false, status: 500, text: async () => "server error" })
         );
 
-        await expectDiscourseApiError(
-          () => run(service.getTopic(123)),
-          {
-            status: 500,
-            method: "GET",
-            pathIncludes: "/t/123.json",
-            bodyIncludes: "server error",
-            contextIncludes: "Get topic failed",
-          }
-        );
+        await expectDiscourseApiError(() => run(service.getTopic(123)), {
+          status: 500,
+          method: "GET",
+          pathIncludes: "/t/123.json",
+          bodyIncludes: "server error",
+          contextIncludes: "Get topic failed",
+        });
       });
 
       it("getUser should throw on empty user response", async () => {
@@ -5082,16 +5280,13 @@ describe(
           makeRes({ ok: false, status: 500, text: async () => "server error" })
         );
 
-        await expectDiscourseApiError(
-          () => run(service.getUser("alice")),
-          {
-            status: 500,
-            method: "GET",
-            pathIncludes: "/u/alice.json",
-            bodyIncludes: "server error",
-            contextIncludes: "Get user failed",
-          }
-        );
+        await expectDiscourseApiError(() => run(service.getUser("alice")), {
+          status: 500,
+          method: "GET",
+          pathIncludes: "/u/alice.json",
+          bodyIncludes: "server error",
+          contextIncludes: "Get user failed",
+        });
       });
 
       it("should surface errors when getUser fetch rejects", async () => {
@@ -5114,587 +5309,660 @@ describe(
           })
         );
 
-      const user = await run(service.getUser("bob"));
-      expect(user).toEqual(
-        expect.objectContaining({
-          id: 7,
-          username: "bob",
-          name: null,
-          avatarTemplate: "",
-          trustLevel: 0,
-          moderator: false,
-          admin: false,
-          postCount: 0,
-          profileViewCount: 0,
-        })
-      );
-    });
-
-    describe("user management", () => {
-      it("creates users with the system API key", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({
-              success: true,
-              user_id: 9,
-              active: true,
-            }),
-          })
-        );
-
-        const result = await run(
-          service.createUser({
-            username: "new-user",
-            email: "new@example.com",
-            password: "longsecret",
-          })
-        );
-
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://discuss.example.com/users",
+        const user = await run(service.getUser("bob"));
+        expect(user).toEqual(
           expect.objectContaining({
-            method: "POST",
-            headers: expect.objectContaining({
-              "Api-Key": "test-api-key",
-              "Api-Username": "system",
-            }),
-          })
-        );
-
-        expect(result).toEqual({
-          success: true,
-          userId: 9,
-          active: true,
-        });
-      });
-
-      it("defaults create user metadata when optional fields are missing", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({ success: true }),
-          })
-        );
-
-        const result = await run(
-          service.createUser({
-            username: "new-user",
-            email: "new@example.com",
-            password: "longsecret",
-          })
-        );
-
-        expect(result).toEqual({ success: true, userId: undefined, active: undefined });
-      });
-
-      it("ignores non-numeric create user ids and active flags", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({ success: true, user_id: "abc", active: "yes" }),
-          })
-        );
-
-        const result = await run(
-          service.createUser({
-            username: "bad-id",
-            email: "bad@example.com",
-            password: "longsecret",
-          })
-        );
-
-        expect(result).toEqual({ success: true, userId: undefined, active: undefined });
-      });
-
-      it("throws when create user response is empty", async () => {
-        fetchMock.mockResolvedValueOnce(emptyRes());
-
-        await expect(
-          run(
-            service.createUser({
-              username: "missing",
-              email: "missing@example.com",
-            })
-          )
-        ).rejects.toThrow("Empty create user response");
-      });
-
-      it("lists admin users with extended fields", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => [validAdminUserPayload()],
-          })
-        );
-
-        const users = await run(
-          service.listAdminUsers({ filter: "active", showEmails: true })
-        );
-
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://discuss.example.com/admin/users/list/active.json?show_emails=true",
-          expect.objectContaining({
-            headers: expect.objectContaining({
-              "Api-Key": "test-api-key",
-              "Api-Username": "system",
-            }),
-          })
-        );
-        expect(users[0]).toEqual(
-          expect.objectContaining({
-            email: "alice@example.com",
-            active: true,
-            lastSeenAt: "2024-01-01T00:00:00Z",
-            staged: false,
+            id: 7,
+            username: "bob",
+            name: null,
+            avatarTemplate: "",
+            trustLevel: 0,
+            moderator: false,
+            admin: false,
+            postCount: 0,
+            profileViewCount: 0,
           })
         );
       });
 
-      it("omits show_emails when admin user listing does not request it", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => [validAdminUserPayload()],
-          })
-        );
-
-        await run(service.listAdminUsers({ filter: "new" }));
-
-        expect(fetchMock).toHaveBeenCalled();
-        const [url] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
-        expect(url ?? "").not.toContain("show_emails");
-      });
-
-      it("handles admin users without email addresses", async () => {
-        const payload = validAdminUserPayload();
-        delete (payload as any).email;
-
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => [payload],
-          })
-        );
-
-        const users = await run(service.listAdminUsers({ filter: "staff" }));
-
-        expect(users[0].email).toBeUndefined();
-      });
-
-      it("fetches users by external id", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({
-              user: validUserPayload(),
-            }),
-          })
-        );
-
-        const user = await run(
-          service.getUserByExternal({ externalId: "abc", provider: "oidc" })
-        );
-
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://discuss.example.com/u/by-external/oidc/abc.json",
-          expect.objectContaining({
-            headers: expect.objectContaining({
-              "Api-Key": "test-api-key",
-              "Api-Username": "system",
-            }),
-          })
-        );
-        expect(user.username).toBe("alice");
-      });
-
-      it("returns directory listings with totals", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({
-              directory_items: [validDirectoryItemPayload()],
-              meta: { total_rows_directory_items: 10 },
-            }),
-          })
-        );
-
-        const result = await run(
-          service.getDirectory({ period: "weekly", order: "likes_received" })
-        );
-
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://discuss.example.com/directory_items.json?period=weekly&order=likes_received",
-          expect.any(Object)
-        );
-        expect(result).toEqual(
-          expect.objectContaining({
-            totalRows: 10,
-            items: [
-              expect.objectContaining({
-                likesReceived: 5,
-                user: expect.objectContaining({ username: "alice" }),
+      describe("user management", () => {
+        it("creates users with the system API key", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                success: true,
+                user_id: 9,
+                active: true,
               }),
-            ],
-          })
-        );
-      });
-
-      it("falls back to computed totals when meta is missing", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({
-              directory_items: [validDirectoryItemPayload()],
-              meta: {},
-            }),
-          })
-        );
-
-        const result = await run(
-          service.getDirectory({ period: "weekly", order: "likes_received" })
-        );
-
-        expect(result.totalRows).toBe(1);
-      });
-
-      it("includes page in directory query when provided and positive", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({
-              directory_items: [validDirectoryItemPayload()],
-              meta: {},
-            }),
-          })
-        );
-
-        await run(
-          service.getDirectory({ period: "weekly", order: "likes_received", page: 3 })
-        );
-
-        const [url] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
-        expect(url).toContain("page=3");
-      });
-
-      it("omits page from directory query when page is non-positive", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({
-              directory_items: [validDirectoryItemPayload()],
-              meta: {},
-            }),
-          })
-        );
-
-        await run(service.getDirectory({ period: "weekly", order: "likes_received", page: 0 }));
-
-        const [url] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
-        expect(url).toBe("https://discuss.example.com/directory_items.json?period=weekly&order=likes_received");
-      });
-
-      it("returns empty directory items when response omits them", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({}),
-          })
-        );
-
-        const result = await run(
-          service.getDirectory({ period: "weekly", order: "likes_received" })
-        );
-
-        expect(result.items).toEqual([]);
-        expect(result.totalRows).toBe(0);
-      });
-
-      it("throws on malformed directory responses", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({ directory_items: {} }),
-          })
-        );
-
-        await expect(
-          run(service.getDirectory({ period: "weekly", order: "likes_received" }))
-        ).rejects.toThrow("Malformed directory response");
-      });
-
-      it("handles password flows and logout via system key", async () => {
-        fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }));
-
-        const forgot = await run(service.forgotPassword("alice@example.com"));
-        const changed = await run(
-          service.changePassword({ token: "tok", password: "newpass123" })
-        );
-        const logout = await run(service.logoutUser(42));
-
-        expect(forgot.success).toBe(true);
-        expect(changed.success).toBe(true);
-        expect(logout.success).toBe(true);
-
-        expect(fetchMock).toHaveBeenNthCalledWith(
-          1,
-          "https://discuss.example.com/session/forgot_password",
-          expect.objectContaining({
-            method: "POST",
-            headers: expect.objectContaining({
-              "Api-Key": "test-api-key",
-              "Api-Username": "system",
-            }),
-          })
-        );
-        expect(fetchMock).toHaveBeenNthCalledWith(
-          2,
-          "https://discuss.example.com/u/password-reset/tok.json",
-          expect.objectContaining({
-            method: "PUT",
-            headers: expect.objectContaining({
-              "Api-Key": "test-api-key",
-              "Api-Username": "system",
-            }),
-          })
-        );
-        expect(fetchMock).toHaveBeenNthCalledWith(
-          3,
-          "https://discuss.example.com/admin/users/42/log_out",
-          expect.objectContaining({
-            method: "POST",
-          })
-        );
-      });
-
-      it("throws when password or logout responses are empty", async () => {
-        fetchMock.mockResolvedValueOnce(emptyRes()).mockResolvedValueOnce(emptyRes());
-
-        await expect(
-          run(service.changePassword({ token: "tok", password: "newpass123" }))
-        ).rejects.toThrow("Empty password change response");
-
-        await expect(run(service.logoutUser(99))).rejects.toThrow("Empty logout response");
-      });
-
-      it("syncs SSO payloads and updates user status", async () => {
-        fetchMock
-          .mockResolvedValueOnce(
-            makeRes({ json: async () => ({ success: true, user_id: 77 }) })
-          )
-          .mockResolvedValueOnce(
-            makeRes({
-              json: async () => ({ status: { emoji: "wave", description: "Hi", ends_at: null } }),
-            })
-          )
-          .mockResolvedValueOnce(
-            makeRes({
-              json: async () => ({ status: { emoji: "wave", description: "Hi", ends_at: null } }),
             })
           );
 
-        const ssoResult = await run(
-          service.syncSso({ sso: "payload", sig: "signature" })
-        );
-        const statusResult = await run(service.getUserStatus("alice"));
-        const updatedStatus = await run(
-          service.updateUserStatus({
-            username: "alice",
-            emoji: "wave",
-            description: "Hi",
-            endsAt: null,
-          })
-        );
+          const result = await run(
+            service.createUser({
+              username: "new-user",
+              email: "new@example.com",
+              password: "longsecret",
+            })
+          );
 
-        expect(ssoResult).toEqual({ success: true, userId: 77 });
-        expect(statusResult.status).toEqual(
-          expect.objectContaining({ emoji: "wave", description: "Hi", endsAt: null })
-        );
-        expect(updatedStatus.status).toEqual(
-          expect.objectContaining({ emoji: "wave", description: "Hi", endsAt: null })
-        );
-      });
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://discuss.example.com/users",
+            expect.objectContaining({
+              method: "POST",
+              headers: expect.objectContaining({
+                "Api-Key": "test-api-key",
+                "Api-Username": "system",
+              }),
+            })
+          );
 
-      it("returns undefined userId when SSO sync response omits it", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({ success: true }),
-          })
-        );
+          expect(result).toEqual({
+            success: true,
+            userId: 9,
+            active: true,
+          });
+        });
 
-        const ssoResult = await run(
-          service.syncSso({ sso: "payload", sig: "signature" })
-        );
+        it("defaults create user metadata when optional fields are missing", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({ success: true }),
+            })
+          );
 
-        expect(ssoResult).toEqual({ success: true, userId: undefined });
-      });
+          const result = await run(
+            service.createUser({
+              username: "new-user",
+              email: "new@example.com",
+              password: "longsecret",
+            })
+          );
 
-      it("handles empty SSO and status responses gracefully", async () => {
-        fetchMock
-          .mockResolvedValueOnce(emptyRes())
-          .mockResolvedValueOnce(makeRes({ json: async () => ({}) }))
-          .mockResolvedValueOnce(emptyRes());
+          expect(result).toEqual({
+            success: true,
+            userId: undefined,
+            active: undefined,
+          });
+        });
 
-        await expect(run(service.syncSso({ sso: "payload", sig: "sig" }))).rejects.toThrow(
-          "Empty SSO sync response"
-        );
+        it("ignores non-numeric create user ids and active flags", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                success: true,
+                user_id: "abc",
+                active: "yes",
+              }),
+            })
+          );
 
-        const status = await run(service.getUserStatus("alice"));
-        expect(status).toEqual({ status: null });
+          const result = await run(
+            service.createUser({
+              username: "bad-id",
+              email: "bad@example.com",
+              password: "longsecret",
+            })
+          );
 
-        await expect(
-          run(
+          expect(result).toEqual({
+            success: true,
+            userId: undefined,
+            active: undefined,
+          });
+        });
+
+        it("throws when create user response is empty", async () => {
+          fetchMock.mockResolvedValueOnce(emptyRes());
+
+          await expect(
+            run(
+              service.createUser({
+                username: "missing",
+                email: "missing@example.com",
+              })
+            )
+          ).rejects.toThrow("Empty create user response");
+        });
+
+        it("lists admin users with extended fields", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => [validAdminUserPayload()],
+            })
+          );
+
+          const users = await run(
+            service.listAdminUsers({ filter: "active", showEmails: true })
+          );
+
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://discuss.example.com/admin/users/list/active.json?show_emails=true",
+            expect.objectContaining({
+              headers: expect.objectContaining({
+                "Api-Key": "test-api-key",
+                "Api-Username": "system",
+              }),
+            })
+          );
+          expect(users[0]).toEqual(
+            expect.objectContaining({
+              email: "alice@example.com",
+              active: true,
+              lastSeenAt: "2024-01-01T00:00:00Z",
+              staged: false,
+            })
+          );
+        });
+
+        it("omits show_emails when admin user listing does not request it", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => [validAdminUserPayload()],
+            })
+          );
+
+          await run(service.listAdminUsers({ filter: "new" }));
+
+          expect(fetchMock).toHaveBeenCalled();
+          const [url] =
+            fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
+          expect(url ?? "").not.toContain("show_emails");
+        });
+
+        it("handles admin users without email addresses", async () => {
+          const payload = validAdminUserPayload();
+          delete (payload as any).email;
+
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => [payload],
+            })
+          );
+
+          const users = await run(service.listAdminUsers({ filter: "staff" }));
+
+          expect(users[0].email).toBeUndefined();
+        });
+
+        it("fetches users by external id", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                user: validUserPayload(),
+              }),
+            })
+          );
+
+          const user = await run(
+            service.getUserByExternal({ externalId: "abc", provider: "oidc" })
+          );
+
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://discuss.example.com/u/by-external/oidc/abc.json",
+            expect.objectContaining({
+              headers: expect.objectContaining({
+                "Api-Key": "test-api-key",
+                "Api-Username": "system",
+              }),
+            })
+          );
+          expect(user.username).toBe("alice");
+        });
+
+        it("returns directory listings with totals", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                directory_items: [validDirectoryItemPayload()],
+                meta: { total_rows_directory_items: 10 },
+              }),
+            })
+          );
+
+          const result = await run(
+            service.getDirectory({ period: "weekly", order: "likes_received" })
+          );
+
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://discuss.example.com/directory_items.json?period=weekly&order=likes_received",
+            expect.any(Object)
+          );
+          expect(result).toEqual(
+            expect.objectContaining({
+              totalRows: 10,
+              items: [
+                expect.objectContaining({
+                  likesReceived: 5,
+                  user: expect.objectContaining({ username: "alice" }),
+                }),
+              ],
+            })
+          );
+        });
+
+        it("falls back to computed totals when meta is missing", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                directory_items: [validDirectoryItemPayload()],
+                meta: {},
+              }),
+            })
+          );
+
+          const result = await run(
+            service.getDirectory({ period: "weekly", order: "likes_received" })
+          );
+
+          expect(result.totalRows).toBe(1);
+        });
+
+        it("includes page in directory query when provided and positive", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                directory_items: [validDirectoryItemPayload()],
+                meta: {},
+              }),
+            })
+          );
+
+          await run(
+            service.getDirectory({
+              period: "weekly",
+              order: "likes_received",
+              page: 3,
+            })
+          );
+
+          const [url] =
+            fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
+          expect(url).toContain("page=3");
+        });
+
+        it("omits page from directory query when page is non-positive", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                directory_items: [validDirectoryItemPayload()],
+                meta: {},
+              }),
+            })
+          );
+
+          await run(
+            service.getDirectory({
+              period: "weekly",
+              order: "likes_received",
+              page: 0,
+            })
+          );
+
+          const [url] =
+            fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
+          expect(url).toBe(
+            "https://discuss.example.com/directory_items.json?period=weekly&order=likes_received"
+          );
+        });
+
+        it("returns empty directory items when response omits them", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({}),
+            })
+          );
+
+          const result = await run(
+            service.getDirectory({ period: "weekly", order: "likes_received" })
+          );
+
+          expect(result.items).toEqual([]);
+          expect(result.totalRows).toBe(0);
+        });
+
+        it("throws on malformed directory responses", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({ directory_items: {} }),
+            })
+          );
+
+          await expect(
+            run(
+              service.getDirectory({
+                period: "weekly",
+                order: "likes_received",
+              })
+            )
+          ).rejects.toThrow("Malformed directory response");
+        });
+
+        it("handles password flows and logout via system key", async () => {
+          fetchMock
+            .mockResolvedValueOnce(
+              makeRes({ json: async () => ({ success: true }) })
+            )
+            .mockResolvedValueOnce(
+              makeRes({ json: async () => ({ success: true }) })
+            )
+            .mockResolvedValueOnce(
+              makeRes({ json: async () => ({ success: true }) })
+            );
+
+          const forgot = await run(service.forgotPassword("alice@example.com"));
+          const changed = await run(
+            service.changePassword({ token: "tok", password: "newpass123" })
+          );
+          const logout = await run(service.logoutUser(42));
+
+          expect(forgot.success).toBe(true);
+          expect(changed.success).toBe(true);
+          expect(logout.success).toBe(true);
+
+          expect(fetchMock).toHaveBeenNthCalledWith(
+            1,
+            "https://discuss.example.com/session/forgot_password",
+            expect.objectContaining({
+              method: "POST",
+              headers: expect.objectContaining({
+                "Api-Key": "test-api-key",
+                "Api-Username": "system",
+              }),
+            })
+          );
+          expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            "https://discuss.example.com/u/password-reset/tok.json",
+            expect.objectContaining({
+              method: "PUT",
+              headers: expect.objectContaining({
+                "Api-Key": "test-api-key",
+                "Api-Username": "system",
+              }),
+            })
+          );
+          expect(fetchMock).toHaveBeenNthCalledWith(
+            3,
+            "https://discuss.example.com/admin/users/42/log_out",
+            expect.objectContaining({
+              method: "POST",
+            })
+          );
+        });
+
+        it("throws when password or logout responses are empty", async () => {
+          fetchMock
+            .mockResolvedValueOnce(emptyRes())
+            .mockResolvedValueOnce(emptyRes());
+
+          await expect(
+            run(
+              service.changePassword({ token: "tok", password: "newpass123" })
+            )
+          ).rejects.toThrow("Empty password change response");
+
+          await expect(run(service.logoutUser(99))).rejects.toThrow(
+            "Empty logout response"
+          );
+        });
+
+        it("syncs SSO payloads and updates user status", async () => {
+          fetchMock
+            .mockResolvedValueOnce(
+              makeRes({ json: async () => ({ success: true, user_id: 77 }) })
+            )
+            .mockResolvedValueOnce(
+              makeRes({
+                json: async () => ({
+                  status: { emoji: "wave", description: "Hi", ends_at: null },
+                }),
+              })
+            )
+            .mockResolvedValueOnce(
+              makeRes({
+                json: async () => ({
+                  status: { emoji: "wave", description: "Hi", ends_at: null },
+                }),
+              })
+            );
+
+          const ssoResult = await run(
+            service.syncSso({ sso: "payload", sig: "signature" })
+          );
+          const statusResult = await run(service.getUserStatus("alice"));
+          const updatedStatus = await run(
             service.updateUserStatus({
               username: "alice",
-              emoji: null,
-              description: null,
+              emoji: "wave",
+              description: "Hi",
               endsAt: null,
             })
-          )
-        ).rejects.toThrow("Empty status response");
-      });
+          );
 
-      it("lists users with pagination", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({
-              users: [
-                {
-                  id: 1,
-                  username: "alice",
-                  avatar_template: "/user/{size}",
-                  name: null,
-                  title: null,
-                  trust_level: 1,
-                  moderator: false,
-                  admin: false,
-                },
-              ],
-            }),
-          })
-        );
+          expect(ssoResult).toEqual({ success: true, userId: 77 });
+          expect(statusResult.status).toEqual(
+            expect.objectContaining({
+              emoji: "wave",
+              description: "Hi",
+              endsAt: null,
+            })
+          );
+          expect(updatedStatus.status).toEqual(
+            expect.objectContaining({
+              emoji: "wave",
+              description: "Hi",
+              endsAt: null,
+            })
+          );
+        });
 
-        const [user] = await run(service.listUsers({ page: 2 }));
+        it("returns undefined userId when SSO sync response omits it", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({ success: true }),
+            })
+          );
 
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://discuss.example.com/users.json?page=2",
-          expect.any(Object)
-        );
-        expect(user.username).toBe("alice");
-      });
+          const ssoResult = await run(
+            service.syncSso({ sso: "payload", sig: "signature" })
+          );
 
-      it("returns an empty list when users payload is missing", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({}),
-          })
-        );
+          expect(ssoResult).toEqual({ success: true, userId: undefined });
+        });
 
-        const result = await run(service.listUsers({}));
+        it("handles empty SSO and status responses gracefully", async () => {
+          fetchMock
+            .mockResolvedValueOnce(emptyRes())
+            .mockResolvedValueOnce(makeRes({ json: async () => ({}) }))
+            .mockResolvedValueOnce(emptyRes());
 
-        expect(result).toEqual([]);
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://discuss.example.com/users.json",
-          expect.any(Object)
-        );
-      });
+          await expect(
+            run(service.syncSso({ sso: "payload", sig: "sig" }))
+          ).rejects.toThrow("Empty SSO sync response");
 
-      it("throws when update or delete user responses are empty", async () => {
-        fetchMock.mockResolvedValueOnce(emptyRes()).mockResolvedValueOnce(emptyRes());
+          const status = await run(service.getUserStatus("alice"));
+          expect(status).toEqual({ status: null });
 
-        await expect(
-          run(
+          await expect(
+            run(
+              service.updateUserStatus({
+                username: "alice",
+                emoji: null,
+                description: null,
+                endsAt: null,
+              })
+            )
+          ).rejects.toThrow("Empty status response");
+        });
+
+        it("lists users with pagination", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({
+                users: [
+                  {
+                    id: 1,
+                    username: "alice",
+                    avatar_template: "/user/{size}",
+                    name: null,
+                    title: null,
+                    trust_level: 1,
+                    moderator: false,
+                    admin: false,
+                  },
+                ],
+              }),
+            })
+          );
+
+          const [user] = await run(service.listUsers({ page: 2 }));
+
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://discuss.example.com/users.json?page=2",
+            expect.any(Object)
+          );
+          expect(user.username).toBe("alice");
+        });
+
+        it("returns an empty list when users payload is missing", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({}),
+            })
+          );
+
+          const result = await run(service.listUsers({}));
+
+          expect(result).toEqual([]);
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://discuss.example.com/users.json",
+            expect.any(Object)
+          );
+        });
+
+        it("throws when update or delete user responses are empty", async () => {
+          fetchMock
+            .mockResolvedValueOnce(emptyRes())
+            .mockResolvedValueOnce(emptyRes());
+
+          await expect(
+            run(
+              service.updateUser({
+                username: "missing",
+                email: "missing@example.com",
+              })
+            )
+          ).rejects.toThrow("Empty update user response");
+
+          await expect(
+            run(
+              service.deleteUser({
+                userId: 99,
+                blockEmail: true,
+              })
+            )
+          ).rejects.toThrow("Empty delete user response");
+        });
+
+        it("updates and deletes users successfully", async () => {
+          fetchMock
+            .mockResolvedValueOnce(
+              makeRes({ json: async () => ({ success: true }) })
+            )
+            .mockResolvedValueOnce(
+              makeRes({ json: async () => ({ success: "ok" }) })
+            );
+
+          const updated = await run(
             service.updateUser({
-              username: "missing",
-              email: "missing@example.com",
+              username: "alice",
+              email: "alice@example.com",
             })
-          )
-        ).rejects.toThrow("Empty update user response");
-
-        await expect(
-          run(
+          );
+          const deleted = await run(
             service.deleteUser({
-              userId: 99,
-              blockEmail: true,
+              userId: 1,
             })
-          )
-        ).rejects.toThrow("Empty delete user response");
+          );
+
+          expect(updated).toEqual({ success: true });
+          expect(deleted).toEqual({ success: true });
+          expect(fetchMock).toHaveBeenCalledWith(
+            "https://discuss.example.com/admin/users/1.json",
+            expect.objectContaining({ method: "DELETE" })
+          );
+        });
+
+        it("passes through delete user blocking flags in query params", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({ json: async () => ({ success: true }) })
+          );
+
+          await run(
+            service.deleteUser({
+              userId: 77,
+              blockEmail: true,
+              blockUrls: true,
+              blockIp: true,
+              deletePosts: true,
+              context: "abuse",
+            })
+          );
+
+          const [url] =
+            fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
+          expect(url).toContain("block_email=true");
+          expect(url).toContain("block_urls=true");
+          expect(url).toContain("block_ip=true");
+          expect(url).toContain("delete_posts=true");
+          expect(url).toContain("context=abuse");
+        });
+
+        it("throws on malformed users list responses", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({ users: {} }),
+            })
+          );
+
+          await expect(run(service.listUsers({}))).rejects.toThrow(
+            "Malformed users response"
+          );
+        });
+
+        it("lists users without page query when page is zero or missing", async () => {
+          fetchMock.mockResolvedValueOnce(
+            makeRes({
+              json: async () => ({ users: [validUserPayload()] }),
+            })
+          );
+
+          await run(service.listUsers({ page: 0 }));
+
+          const [url] =
+            fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
+          expect(url).toBe("https://discuss.example.com/users.json");
+        });
+
+        it("throws when admin users or external lookup responses are empty", async () => {
+          fetchMock.mockResolvedValueOnce(emptyRes());
+
+          await expect(
+            run(service.listAdminUsers({ filter: "active", showEmails: true }))
+          ).rejects.toThrow("Empty admin users response");
+
+          fetchMock.mockResolvedValueOnce(emptyRes());
+
+          await expect(
+            run(
+              service.getUserByExternal({
+                externalId: "missing",
+                provider: "oidc",
+              })
+            )
+          ).rejects.toThrow("Empty external user response");
+        });
       });
-
-      it("updates and deletes users successfully", async () => {
-        fetchMock
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }))
-          .mockResolvedValueOnce(makeRes({ json: async () => ({ success: "ok" }) }));
-
-        const updated = await run(
-          service.updateUser({
-            username: "alice",
-            email: "alice@example.com",
-          })
-        );
-        const deleted = await run(
-          service.deleteUser({
-            userId: 1,
-          })
-        );
-
-        expect(updated).toEqual({ success: true });
-        expect(deleted).toEqual({ success: true });
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://discuss.example.com/admin/users/1.json",
-          expect.objectContaining({ method: "DELETE" })
-        );
-      });
-
-      it("passes through delete user blocking flags in query params", async () => {
-        fetchMock.mockResolvedValueOnce(makeRes({ json: async () => ({ success: true }) }));
-
-        await run(
-          service.deleteUser({
-            userId: 77,
-            blockEmail: true,
-            blockUrls: true,
-            blockIp: true,
-            deletePosts: true,
-            context: "abuse",
-          })
-        );
-
-        const [url] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
-        expect(url).toContain("block_email=true");
-        expect(url).toContain("block_urls=true");
-        expect(url).toContain("block_ip=true");
-        expect(url).toContain("delete_posts=true");
-        expect(url).toContain("context=abuse");
-      });
-
-      it("throws on malformed users list responses", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({ users: {} }),
-          })
-        );
-
-        await expect(run(service.listUsers({}))).rejects.toThrow("Malformed users response");
-      });
-
-      it("lists users without page query when page is zero or missing", async () => {
-        fetchMock.mockResolvedValueOnce(
-          makeRes({
-            json: async () => ({ users: [validUserPayload()] }),
-          })
-        );
-
-        await run(service.listUsers({ page: 0 }));
-
-        const [url] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
-        expect(url).toBe("https://discuss.example.com/users.json");
-      });
-
-      it("throws when admin users or external lookup responses are empty", async () => {
-        fetchMock.mockResolvedValueOnce(emptyRes());
-
-        await expect(
-          run(service.listAdminUsers({ filter: "active", showEmails: true }))
-        ).rejects.toThrow("Empty admin users response");
-
-        fetchMock.mockResolvedValueOnce(emptyRes());
-
-        await expect(
-          run(service.getUserByExternal({ externalId: "missing", provider: "oidc" }))
-        ).rejects.toThrow("Empty external user response");
-      });
-    });
 
       it("getTags should normalize list responses", async () => {
         fetchMock.mockResolvedValueOnce(
@@ -5775,7 +6043,9 @@ describe(
           })
         );
 
-        await expect(run(service.getTags())).rejects.toThrow("Malformed tags response");
+        await expect(run(service.getTags())).rejects.toThrow(
+          "Malformed tags response"
+        );
       });
 
       it("getTag should throw when tag response is empty", async () => {
@@ -5854,7 +6124,9 @@ describe(
           })
         );
 
-        await expect(run(service.getTagGroups())).rejects.toThrow("Malformed tag groups response");
+        await expect(run(service.getTagGroups())).rejects.toThrow(
+          "Malformed tag groups response"
+        );
       });
 
       it("normalizes boolean permissions when mapping tag groups", async () => {
@@ -5864,7 +6136,12 @@ describe(
               tag_groups: [
                 validTagGroupPayload({
                   id: 15,
-                  permissions: { staff: true, moderators: "2", viewer: false, invalid: "oops" as any },
+                  permissions: {
+                    staff: true,
+                    moderators: "2",
+                    viewer: false,
+                    invalid: "oops" as any,
+                  },
                 }),
               ],
             }),
@@ -5873,7 +6150,11 @@ describe(
 
         const [group] = await run(service.getTagGroups());
 
-        expect(group.permissions).toEqual({ staff: 1, moderators: 2, viewer: 0 });
+        expect(group.permissions).toEqual({
+          staff: 1,
+          moderators: 2,
+          viewer: 0,
+        });
       });
 
       it("defaults missing tag arrays when mapping tag groups", async () => {
@@ -5973,7 +6254,8 @@ describe(
           })
         );
 
-        const [, options] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
+        const [, options] =
+          fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
         const body = JSON.parse(String((options as any)?.body ?? "{}"));
         expect(body.tag_group.permissions).toBeUndefined();
       });
@@ -6044,7 +6326,8 @@ describe(
           })
         );
 
-        const [, options] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
+        const [, options] =
+          fetchMock.mock.calls[fetchMock.mock.calls.length - 1] ?? [];
         const body = JSON.parse(String((options as any)?.body ?? "{}"));
         expect(body.tag_group.permissions).toEqual({ staff: 1 });
       });
@@ -6168,7 +6451,9 @@ describe(
       it("throws when site info responses are empty or malformed", async () => {
         fetchMock.mockResolvedValueOnce(emptyRes());
 
-        await expect(run(service.getSiteInfo())).rejects.toThrow("Empty site info response");
+        await expect(run(service.getSiteInfo())).rejects.toThrow(
+          "Empty site info response"
+        );
 
         fetchMock.mockResolvedValueOnce(
           makeRes({
@@ -6298,7 +6583,9 @@ describe(
 
       it("should default optional user fields when validation succeeds", async () => {
         fetchMock.mockResolvedValueOnce(
-          makeRes({ json: async () => ({ current_user: { id: 9, username: "bob" } }) })
+          makeRes({
+            json: async () => ({ current_user: { id: 9, username: "bob" } }),
+          })
         );
 
         const result = await run(service.validateUserApiKey("valid"));
@@ -6407,7 +6694,9 @@ describe(
       it("treats abort errors as retryable", async () => {
         const error = new Error("aborted");
         error.name = "AbortError";
-        const apiSpy = vi.spyOn(service as any, "fetchApi").mockRejectedValueOnce(error);
+        const apiSpy = vi
+          .spyOn(service as any, "fetchApi")
+          .mockRejectedValueOnce(error);
 
         const result = await run(service.validateUserApiKey("any-key"));
 
@@ -6551,14 +6840,16 @@ describe("NonceManager cleanup", () => {
 });
 
 describe("CryptoService decryptPayload", () => {
-  const encrypted = Buffer.from("ciphertext-with-sufficient-length".repeat(3)).toString(
-    "base64"
-  );
+  const encrypted = Buffer.from(
+    "ciphertext-with-sufficient-length".repeat(3)
+  ).toString("base64");
 
   it("should decrypt payload and return key", async () => {
     const decryptFn = vi
       .fn()
-      .mockImplementation(() => Buffer.from(JSON.stringify({ key: "decrypted-key" }), "utf-8"));
+      .mockImplementation(() =>
+        Buffer.from(JSON.stringify({ key: "decrypted-key" }), "utf-8")
+      );
     const cryptoService = new CryptoService(decryptFn as any);
 
     const result = await run(
@@ -6594,7 +6885,9 @@ describe("CryptoService decryptPayload", () => {
   });
 
   it("should throw when decryption output is empty", async () => {
-    const decryptFn = vi.fn().mockImplementation(() => Buffer.from("{}", "utf-8"));
+    const decryptFn = vi
+      .fn()
+      .mockImplementation(() => Buffer.from("{}", "utf-8"));
     const cryptoService = new CryptoService(decryptFn as any);
 
     await expect(
@@ -6607,7 +6900,9 @@ describe("CryptoService decryptPayload", () => {
     const cryptoService = new CryptoService(decryptFn as any);
 
     await expect(
-      run(cryptoService.decryptPayload(Buffer.alloc(0).toString("base64"), "key"))
+      run(
+        cryptoService.decryptPayload(Buffer.alloc(0).toString("base64"), "key")
+      )
     ).rejects.toThrow("invalid base64: empty payload");
   });
 
@@ -6634,7 +6929,9 @@ describe("CryptoService decryptPayload", () => {
   });
 
   it("should throw when decrypted data is invalid JSON", async () => {
-    const decryptFn = vi.fn().mockImplementation(() => Buffer.from("not-json", "utf-8"));
+    const decryptFn = vi
+      .fn()
+      .mockImplementation(() => Buffer.from("not-json", "utf-8"));
     const cryptoService = new CryptoService(decryptFn as any);
 
     await expect(
@@ -6645,7 +6942,9 @@ describe("CryptoService decryptPayload", () => {
   it("should throw when decrypted JSON has no key field", async () => {
     const decryptFn = vi
       .fn()
-      .mockImplementation(() => Buffer.from(JSON.stringify({ foo: "bar" }), "utf-8"));
+      .mockImplementation(() =>
+        Buffer.from(JSON.stringify({ foo: "bar" }), "utf-8")
+      );
     const cryptoService = new CryptoService(decryptFn as any);
 
     await expect(
@@ -6656,7 +6955,9 @@ describe("CryptoService decryptPayload", () => {
   it("should reject non-string decrypted keys", async () => {
     const decryptFn = vi
       .fn()
-      .mockImplementation(() => Buffer.from(JSON.stringify({ key: 42 }), "utf-8"));
+      .mockImplementation(() =>
+        Buffer.from(JSON.stringify({ key: 42 }), "utf-8")
+      );
     const cryptoService = new CryptoService(decryptFn as any);
 
     await expect(
@@ -6678,14 +6979,18 @@ describe("CryptoService decryptPayload", () => {
   it("should allow configurable ciphertext size bounds", async () => {
     const decryptFn = vi
       .fn()
-      .mockImplementation(() => Buffer.from(JSON.stringify({ key: "custom" }), "utf-8"));
+      .mockImplementation(() =>
+        Buffer.from(JSON.stringify({ key: "custom" }), "utf-8")
+      );
     const cryptoService = new CryptoService(decryptFn as any, {
       minCiphertextBytes: 32,
       maxCiphertextBytes: 2048,
     });
     const largePayload = Buffer.alloc(1500).toString("base64");
 
-    const result = await run(cryptoService.decryptPayload(largePayload, "private-key"));
+    const result = await run(
+      cryptoService.decryptPayload(largePayload, "private-key")
+    );
 
     expect(result).toBe("custom");
     expect(decryptFn).toHaveBeenCalled();
@@ -6772,12 +7077,18 @@ describe("NonceManager", () => {
     });
 
     it("rejects empty client ids and private keys", () => {
-      expect(() => manager.create("   ", "key")).toThrow("clientId is required");
-      expect(() => manager.create("client", "   ")).toThrow("privateKey is required");
+      expect(() => manager.create("   ", "key")).toThrow(
+        "clientId is required"
+      );
+      expect(() => manager.create("client", "   ")).toThrow(
+        "privateKey is required"
+      );
     });
 
     it("rejects non-string private keys", () => {
-      expect(() => manager.create("client", 123 as any)).toThrow("privateKey is required");
+      expect(() => manager.create("client", 123 as any)).toThrow(
+        "privateKey is required"
+      );
     });
 
     it("returns false when verifying with invalid client id input", () => {
@@ -6985,7 +7296,9 @@ describe("NonceManager", () => {
       const second = limitedManager.create("client", "k2");
 
       dateSpy.mockReturnValue(now + 2);
-      expect(() => limitedManager.create("client", "k3")).toThrow(NonceCapacityError);
+      expect(() => limitedManager.create("client", "k3")).toThrow(
+        NonceCapacityError
+      );
 
       expect(limitedManager.verify(first, "client")).toBe(false);
       expect(limitedManager.verify(second, "client")).toBe(true);
@@ -7008,7 +7321,9 @@ describe("NonceManager", () => {
       const third = limitedManager.create("c3", "k3");
 
       dateSpy.mockReturnValue(3);
-      expect(() => limitedManager.create("c4", "k4")).toThrow(NonceCapacityError);
+      expect(() => limitedManager.create("c4", "k4")).toThrow(
+        NonceCapacityError
+      );
 
       expect(limitedManager.verify(first, "c1")).toBe(false);
       expect(limitedManager.verify(second, "c2")).toBe(true);
@@ -7040,13 +7355,13 @@ describe("NonceManager", () => {
     });
 
     it("should stop eviction loop when no entries can be removed for a client", () => {
-      const resilientManager = new NonceManager({ ttlMs: 1000, maxPerClient: 1 });
+      const resilientManager = new NonceManager({
+        ttlMs: 1000,
+        maxPerClient: 1,
+      });
       const now = Date.now();
       (resilientManager as any).nonces = new Map<string, any>([
-        [
-          "nonce-1",
-          { clientId: "client", privateKey: "k1", timestamp: now },
-        ],
+        ["nonce-1", { clientId: "client", privateKey: "k1", timestamp: now }],
         [
           "nonce-2",
           { clientId: "client", privateKey: "k2", timestamp: now + 1 },
@@ -7088,7 +7403,9 @@ describe("NonceManager", () => {
       (resilientManager as any).evictGlobally(1);
 
       expect((resilientManager as any).nonces.size).toBe(1);
-      expect(Array.from((resilientManager as any).nonces.keys())).toEqual(["nonce-2"]);
+      expect(Array.from((resilientManager as any).nonces.keys())).toEqual([
+        "nonce-2",
+      ]);
     });
 
     it("should ignore global eviction when limit is negative", () => {
@@ -7177,7 +7494,9 @@ describe("NonceManager", () => {
       manager.create("client-a", "k1");
       manager.create("client-a", "k2");
 
-      expect(events).toEqual([{ type: "client", clientId: "client-a", count: 1 }]);
+      expect(events).toEqual([
+        { type: "client", clientId: "client-a", count: 1 },
+      ]);
 
       manager.create("client-b", "k3");
       manager.create("client-c", "k4");
@@ -7217,7 +7536,9 @@ describe("createSafeLogger", () => {
 
     const safeLogger = createSafeLogger(throwingLogger);
 
-    expect(() => safeLogger.info!("info message", { foo: "bar" })).not.toThrow();
+    expect(() =>
+      safeLogger.info!("info message", { foo: "bar" })
+    ).not.toThrow();
     expect(() => safeLogger.error("error message")).not.toThrow();
     expect(throwingLogger.info).toHaveBeenCalledTimes(1);
     expect(throwingLogger.error).toHaveBeenCalledTimes(1);

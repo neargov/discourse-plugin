@@ -2,18 +2,15 @@ import type { Implementer } from "every-plugin/orpc";
 import type { Effect } from "every-plugin/effect";
 import type { CryptoService, DiscourseService, NonceManager } from "../service";
 import type { contract } from "../contract";
-import type {
-  LogFn,
-  MakeHandler,
-  PluginContext,
-  RunEffect,
-} from "../index";
+import type { LogFn, MakeHandler, PluginContext, RunEffect } from "../index";
 import type { PluginErrorConstructors } from "../plugin-errors";
 import type { NormalizedUserApiScopes } from "../plugin-config";
 
 type RouterConfigErrorCtor = typeof import("../index").RouterConfigError;
-type SanitizeErrorForLog = typeof import("../plugin-errors").sanitizeErrorForLog;
-type MapValidateUserApiKeyResult = typeof import("../plugin-config").mapValidateUserApiKeyResult;
+type SanitizeErrorForLog =
+  typeof import("../plugin-errors").sanitizeErrorForLog;
+type MapValidateUserApiKeyResult =
+  typeof import("../plugin-config").mapValidateUserApiKeyResult;
 
 type Builder = Implementer<typeof contract, PluginContext, PluginContext>;
 
@@ -65,7 +62,9 @@ export const buildAuthRouter = (params: {
   return {
     initiateLink: builder.initiateLink.handler(
       makeHandler("initiate-link", async ({ input, errors }) => {
-        const { publicKey, privateKey } = await run(cryptoService.generateKeyPair());
+        const { publicKey, privateKey } = await run(
+          cryptoService.generateKeyPair()
+        );
 
         const nonce = nonceManager.create(input.clientId, privateKey);
 
@@ -148,6 +147,13 @@ export const buildAuthRouter = (params: {
           });
         }
 
+        log("info", "Encrypted payload received for Discourse link; confirm host pasted it exactly", {
+          action: "complete-link",
+          nonceSuffix: input.nonce.slice(-6),
+          payload: input.payload,
+          payloadLength: input.payload.length,
+        });
+
         try {
           let userApiKey: string;
           try {
@@ -166,7 +172,6 @@ export const buildAuthRouter = (params: {
               data: {},
             });
           }
-
           const discourseUser = await resolveAsync(
             discourseService.getCurrentUser(userApiKey)
           );

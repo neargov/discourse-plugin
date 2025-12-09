@@ -27,7 +27,7 @@ import {
   noopLogger,
 } from "../../service";
 import { effectHelpers } from "../../utils";
-import { uploadPayload } from "../../tests/fixtures";
+import { uploadPayload } from "../fixtures";
 
 const buildMockContext = () => ({
   discourseService: {},
@@ -317,9 +317,9 @@ describe("withErrorLogging", () => {
       config: makeConfig(),
     });
 
-    await expect(
-      withErrorLogging("retry-action", () => fn(), {})
-    ).rejects.toBe(error);
+    await expect(withErrorLogging("retry-action", () => fn(), {})).rejects.toBe(
+      error
+    );
 
     expect(fn).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith(
@@ -407,11 +407,9 @@ describe("withErrorLogging", () => {
   it("does not retry when transport-level failures occur", async () => {
     const { logSpy, log } = makeLogger();
     const nonceManager = new NonceManager();
-    const fn = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw new Error("network blip");
-      });
+    const fn = vi.fn().mockImplementationOnce(() => {
+      throw new Error("network blip");
+    });
 
     const withErrorLogging = createWithErrorLogging({
       log,
@@ -420,14 +418,17 @@ describe("withErrorLogging", () => {
       config: makeConfig(),
     });
 
-    await expect(withErrorLogging("transport-retry", () => fn(), {})).rejects.toThrow(
-      "network blip"
-    );
+    await expect(
+      withErrorLogging("transport-retry", () => fn(), {})
+    ).rejects.toThrow("network blip");
     expect(fn).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         level: "error",
-        meta: expect.objectContaining({ action: "transport-retry", attempt: 1 }),
+        meta: expect.objectContaining({
+          action: "transport-retry",
+          attempt: 1,
+        }),
       })
     );
   });
@@ -445,9 +446,13 @@ describe("withErrorLogging", () => {
     });
 
     await expect(
-      withErrorLogging("async-action", async () => {
-        return Promise.reject(boom);
-      }, {})
+      withErrorLogging(
+        "async-action",
+        async () => {
+          return Promise.reject(boom);
+        },
+        {}
+      )
     ).rejects.toBe(boom);
 
     expect(logSpy).toHaveBeenCalledWith(
@@ -609,7 +614,13 @@ describe("rate limiting and caching helpers", () => {
     now.mockReturnValue(80);
     expect(cache.get("b")).toBeUndefined();
 
-    expect(cache.stats()).toEqual({ size: 0, hits: 1, misses: 2, evictions: 2, ttlMs: 50 });
+    expect(cache.stats()).toEqual({
+      size: 0,
+      hits: 1,
+      misses: 2,
+      evictions: 2,
+      ttlMs: 50,
+    });
     now.mockRestore();
   });
 
@@ -629,7 +640,13 @@ describe("rate limiting and caching helpers", () => {
 
     expect(call).toBeGreaterThanOrEqual(3);
     expect(value).toBeUndefined();
-    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 1, ttlMs: 50 });
+    expect(cache.stats()).toEqual({
+      size: 0,
+      hits: 0,
+      misses: 1,
+      evictions: 1,
+      ttlMs: 50,
+    });
   });
 
   it("no-ops when cache capacity is zero", () => {
@@ -637,7 +654,13 @@ describe("rate limiting and caching helpers", () => {
 
     cache.set("a", "one");
     expect(cache.get("a")).toBeUndefined();
-    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 1000 });
+    expect(cache.stats()).toEqual({
+      size: 0,
+      hits: 0,
+      misses: 1,
+      evictions: 0,
+      ttlMs: 1000,
+    });
   });
 
   it("no-ops when cache TTL is non-positive", () => {
@@ -645,7 +668,13 @@ describe("rate limiting and caching helpers", () => {
 
     cache.set("a", "one");
     expect(cache.get("a")).toBeUndefined();
-    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 0 });
+    expect(cache.stats()).toEqual({
+      size: 0,
+      hits: 0,
+      misses: 1,
+      evictions: 0,
+      ttlMs: 0,
+    });
   });
 
   it("logs cache hits and fills via router helpers", async () => {
@@ -687,7 +716,13 @@ describe("rate limiting and caching helpers", () => {
       cacheKey: "cache-key",
     });
     expect(helpers.cacheStats()).toEqual(
-      expect.objectContaining({ hits: 1, misses: 1, size: 1, evictions: 0, ttlMs: 1000 })
+      expect.objectContaining({
+        hits: 1,
+        misses: 1,
+        size: 1,
+        evictions: 0,
+        ttlMs: 1000,
+      })
     );
   });
 
@@ -704,7 +739,13 @@ describe("rate limiting and caching helpers", () => {
     cache.set("a", "two");
 
     expect(cache.get("a")).toBe("two");
-    expect(cache.stats()).toEqual({ size: 1, hits: 1, misses: 0, evictions: 0, ttlMs: 100 });
+    expect(cache.stats()).toEqual({
+      size: 1,
+      hits: 1,
+      misses: 0,
+      evictions: 0,
+      ttlMs: 100,
+    });
     expect(logger.debug).not.toHaveBeenCalledWith(
       "Cache eviction",
       expect.objectContaining({ key: "a" })
@@ -724,7 +765,13 @@ describe("rate limiting and caching helpers", () => {
     cache.delete("a");
 
     expect(cache.get("a")).toBeUndefined();
-    expect(cache.stats()).toEqual({ size: 0, hits: 0, misses: 1, evictions: 1, ttlMs: 1000 });
+    expect(cache.stats()).toEqual({
+      size: 0,
+      hits: 0,
+      misses: 1,
+      evictions: 1,
+      ttlMs: 1000,
+    });
     expect(logger.debug).toHaveBeenCalledWith("Cache eviction", {
       action: "cache-evict",
       reason: "manual",
@@ -743,7 +790,13 @@ describe("rate limiting and caching helpers", () => {
 
     expect(cache.get("b")).toBe("two");
     expect(cache.get("a")).toBeUndefined();
-    expect(cache.stats()).toEqual({ size: 1, hits: 1, misses: 1, evictions: 1, ttlMs: 50 });
+    expect(cache.stats()).toEqual({
+      size: 1,
+      hits: 1,
+      misses: 1,
+      evictions: 1,
+      ttlMs: 50,
+    });
 
     now.mockRestore();
   });
@@ -770,10 +823,19 @@ describe("rate limiting and caching helpers", () => {
       strategy: "perClient",
     });
 
-    expect(limiter.take("action", "client-a")).toEqual({ allowed: true, retryAfterMs: 0 });
+    expect(limiter.take("action", "client-a")).toEqual({
+      allowed: true,
+      retryAfterMs: 0,
+    });
     now.mockReturnValue(500);
-    expect(limiter.take("action", "client-a")).toEqual({ allowed: false, retryAfterMs: 500 });
-    expect(limiter.take("action", "client-b")).toEqual({ allowed: true, retryAfterMs: 0 });
+    expect(limiter.take("action", "client-a")).toEqual({
+      allowed: false,
+      retryAfterMs: 500,
+    });
+    expect(limiter.take("action", "client-b")).toEqual({
+      allowed: true,
+      retryAfterMs: 0,
+    });
     now.mockRestore();
   });
 
@@ -804,12 +866,14 @@ describe("rate limiting and caching helpers", () => {
     };
     const helpers = __internalCreateRouterHelpers(context as any);
     const errors = {
-      TOO_MANY_REQUESTS: vi.fn(({ message, data }) => new Error(`${message}:${data.retryAfterMs}`)),
+      TOO_MANY_REQUESTS: vi.fn(
+        ({ message, data }) => new Error(`${message}:${data.retryAfterMs}`)
+      ),
     };
 
-    expect(() => helpers.enforceRateLimit("limited-action", errors as any)).toThrow(
-      "Rate limit exceeded:250"
-    );
+    expect(() =>
+      helpers.enforceRateLimit("limited-action", errors as any)
+    ).toThrow("Rate limit exceeded:250");
     expect(errors.TOO_MANY_REQUESTS).toHaveBeenCalledWith({
       message: "Rate limit exceeded",
       data: {
@@ -835,7 +899,9 @@ describe("rate limiting and caching helpers", () => {
     const helpers = __internalCreateRouterHelpers(context as any);
 
     expect(() => helpers.enforceRateLimit("limited-action", {} as any)).toThrow(
-      new RouterConfigError("TOO_MANY_REQUESTS constructor missing for rate limiting")
+      new RouterConfigError(
+        "TOO_MANY_REQUESTS constructor missing for rate limiting"
+      )
     );
   });
 
@@ -1365,7 +1431,9 @@ describe("createRouter retry policy wiring", () => {
   });
 
   it("makeHandler executes Effect-based handlers through run()", async () => {
-    const { makeHandler } = __internalCreateRouterHelpers(buildMockContext() as any);
+    const { makeHandler } = __internalCreateRouterHelpers(
+      buildMockContext() as any
+    );
     const handler = makeHandler(
       "effect-action",
       ({ input }) => Effect.succeed({ echoed: input }),
@@ -1390,7 +1458,13 @@ describe("createRouter retry policy wiring", () => {
     const stats = cache.stats();
 
     expect(fetched).toBeUndefined();
-    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 0 });
+    expect(stats).toEqual({
+      size: 0,
+      hits: 0,
+      misses: 1,
+      evictions: 0,
+      ttlMs: 0,
+    });
   });
 
   it("treats invalid cache size as disabled while preserving ttl metadata", () => {
@@ -1401,7 +1475,13 @@ describe("createRouter retry policy wiring", () => {
     const stats = cache.stats();
 
     expect(fetched).toBeUndefined();
-    expect(stats).toEqual({ size: 0, hits: 0, misses: 1, evictions: 0, ttlMs: 100 });
+    expect(stats).toEqual({
+      size: 0,
+      hits: 0,
+      misses: 1,
+      evictions: 0,
+      ttlMs: 100,
+    });
   });
 
   it("exposes cache stats when cache is omitted", () => {
@@ -1437,7 +1517,13 @@ describe("createRouter retry policy wiring", () => {
 
     expect(removed).toBe(2);
     expect(cache.get("topics:1")).toBe("topic");
-    expect(cache.stats()).toEqual({ size: 1, hits: 1, misses: 0, evictions: 2, ttlMs: 1000 });
+    expect(cache.stats()).toEqual({
+      size: 1,
+      hits: 1,
+      misses: 0,
+      evictions: 2,
+      ttlMs: 1000,
+    });
     expect(logger.debug).toHaveBeenCalledWith(
       "Cache eviction",
       expect.objectContaining({ reason: "prefix", prefix: "posts:" })
@@ -1449,7 +1535,13 @@ describe("createRouter retry policy wiring", () => {
       get: vi.fn(),
       set: vi.fn(),
       delete: vi.fn(),
-      stats: vi.fn(() => ({ size: 0, hits: 0, misses: 0, evictions: 0, ttlMs: 0 })),
+      stats: vi.fn(() => ({
+        size: 0,
+        hits: 0,
+        misses: 0,
+        evictions: 0,
+        ttlMs: 0,
+      })),
     };
     const helpers = __internalCreateRouterHelpers({
       ...buildMockContext(),
@@ -1856,7 +1948,12 @@ describe("createRouter handlers", () => {
     const router = makeRouter(context);
 
     await router.getRevision({
-      input: { postId: 1, revision: 1, username: "alice", userApiKey: "token-a" },
+      input: {
+        postId: 1,
+        revision: 1,
+        username: "alice",
+        userApiKey: "token-a",
+      },
       errors: {},
     });
     await router.getRevision({

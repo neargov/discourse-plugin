@@ -13,8 +13,8 @@
     "src/**/*.tsx",
     "src/**/*.mts",
     "src/**/*.cts",
-    "src/**/__tests__/**/*.ts",
-    "src/**/__tests__/**/*.tsx"
+    "src/**/tests/**/*.ts",
+    "src/**/tests/**/*.tsx"
   ],
   "exclude": ["node_modules", "dist"]
 }

@@ -105,12 +105,14 @@ await runtime.shutdown();
 
 Type bindings are optional (the contract enforces runtime safety) but improve IDE autocomplete. Keep the plugin as a **dev dependency only**; the runtime loads the remote build.
 
-1) Install types only:
+1. Install types only:
+
 ```bash
 bun add -D discourse-plugin
 ```
 
-2) Add module augmentation so `usePlugin` is typed:
+2. Add module augmentation so `usePlugin` is typed:
+
 ```ts
 // types.d.ts
 import type DiscoursePlugin from "discourse-plugin";
@@ -122,7 +124,8 @@ declare module "every-plugin" {
 }
 ```
 
-3) Use the remote module at runtime (no local import of implementation):
+3. Use the remote module at runtime (no local import of implementation):
+
 ```ts
 import { createPluginRuntime } from "every-plugin/runtime";
 
@@ -168,6 +171,7 @@ const { client } = await runtime.usePlugin("discourse-plugin", {
 - `discourseApiKey` **secret**: Discourse system API key (template-injected as `{{DISCOURSE_API_KEY}}`).
 
 Observability hooks:
+
 - `requestLogger`: Structured per-attempt request events (`path`, `method`, `attempt`, `status`, `outcome`, `retryDelayMs`, `error`).
 - `fetch`: Custom `fetch` implementation for proxying, mTLS, or tracing instrumentation.
 
@@ -192,6 +196,7 @@ Observability hooks:
 - `getUser`: Fetch a user profile.
 
 All procedures surface `CommonPluginErrors` from every-plugin. Notable codes:
+
 - `BAD_REQUEST`: Invalid nonce/payload/input.
 - `UNAUTHORIZED`/`FORBIDDEN`: Credential or authorization issues.
 - `NOT_FOUND`: Missing resources.

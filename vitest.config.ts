@@ -5,9 +5,9 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: [
-      "src/__tests__/unit/**/*.test.ts",
-      "src/__tests__/integration/**/*.test.ts",
-      "src/__tests__/e2e/**/*.test.ts"
+      "src/tests/unit/**/*.test.ts",
+      "src/tests/integration/**/*.test.ts",
+      "src/tests/e2e/**/*.test.ts",
     ],
     exclude: ["node_modules", "dist"],
     testTimeout: 10000,
@@ -19,8 +19,8 @@ export default defineConfig({
         "**/*.config.*",
         "dist",
         "node_modules",
-        "**/__tests__/**",
-        "**/*.d.ts"
+        "**/tests/**",
+        "**/*.d.ts",
       ],
       thresholds: {
         statements: 70,

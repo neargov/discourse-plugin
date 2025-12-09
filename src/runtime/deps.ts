@@ -8,7 +8,9 @@ import {
 import type { DiscoursePluginConfig } from "../plugin-config";
 import { effectHelpers } from "../utils";
 
-export const interruptCleanupFiber = (fiber: Fiber.RuntimeFiber<never, never>) =>
+export const interruptCleanupFiber = (
+  fiber: Fiber.RuntimeFiber<never, never>
+) =>
   effectHelpers.interrupt(fiber).pipe(
     Effect.asVoid,
     Effect.catchAll(() => Effect.void)
